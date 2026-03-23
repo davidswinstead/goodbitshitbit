@@ -340,7 +340,7 @@ function h(mixed $v): string
         .match-tie  { color: #6c757d; }
         .delta-pos  { color: #198754; }
         .delta-neg  { color: #dc3545; }
-        .btn-edit   { opacity: .55; transition: opacity .15s; }
+        .btn-edit   { opacity: .55; transition: opacity .15s; line-height: 1; text-decoration: none !important; }
         .btn-edit:hover { opacity: 1; }
     </style>
 </head>
@@ -426,13 +426,13 @@ function h(mixed $v): string
                     <thead class="table-dark">
                         <tr>
                             <th style="width:3rem">#</th>
+                            <th style="width:2.5rem"></th>
                             <th><?= sortLink('name',                'Bit Name',        $sortCol, $sortDir) ?></th>
                             <th><?= sortLink('current_elo',         'Elo Rating',       $sortCol, $sortDir) ?></th>
                             <th><?= sortLink('times_performed',     'Performances',    $sortCol, $sortDir) ?></th>
                             <th><?= sortLink('last_performed_date', 'Last Performed',  $sortCol, $sortDir) ?></th>
                             <th>Best PPM</th>
                             <th>Avg PPM</th>
-                            <th style="width:2.5rem"></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -458,6 +458,13 @@ function h(mixed $v): string
                             ?>
                             <tr>
                                 <td class="text-muted"><?= $rank + 1 ?></td>
+                                <td class="text-center">
+                                    <button type="button"
+                                            class="btn btn-sm btn-link btn-edit p-0"
+                                            title="Edit bit"
+                                            onclick="openEditModal(<?= (int)$bit['id'] ?>, <?= json_encode($bit['name'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>)"
+                                    >&#9999;&#65039;</button>
+                                </td>
                                 <td class="fw-semibold"><?= h($bit['name']) ?></td>
                                 <td>
                                     <span class="badge <?= $eloBg ?> elo-badge fs-6">
@@ -468,13 +475,6 @@ function h(mixed $v): string
                                 <td><?= $bit['last_performed_date'] ? h($bit['last_performed_date']) : '<span class="text-muted">—</span>' ?></td>
                                 <td><?= $bestPpm ?></td>
                                 <td><?= $avgPpm ?></td>
-                                <td class="text-center">
-                                    <button type="button"
-                                            class="btn btn-sm btn-link btn-edit p-0"
-                                            title="Edit bit"
-                                            onclick="openEditModal(<?= (int)$bit['id'] ?>, <?= json_encode($bit['name'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>)"
-                                    >&#9999;&#65039;</button>
-                                </td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
@@ -740,7 +740,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // ── Edit Bit Modal ────────────────────────────────────────────────────────────
 
-const editModal          = new bootstrap.Modal(document.getElementById('editBitModal'));
+// Bootstrap loads AFTER this script tag, so initialise the modal lazily
+// the first time openEditModal() is called rather than at parse time.
+let editModal = null;
+
 const editBitIdInput     = document.getElementById('editBitId');
 const editBitNameInput   = document.getElementById('editBitName');
 const deleteBitIdInput   = document.getElementById('deleteBitId');
@@ -749,6 +752,10 @@ const deleteConfirmPanel = document.getElementById('deleteConfirmPanel');
 const renameForm         = document.getElementById('renameForm');
 
 function openEditModal(id, name) {
+    if (!editModal) {
+        editModal = new bootstrap.Modal(document.getElementById('editBitModal'));
+    }
+
     // Reset to rename view
     deleteConfirmPanel.classList.add('d-none');
     renameForm.classList.remove('d-none');
@@ -759,7 +766,6 @@ function openEditModal(id, name) {
     deleteConfirmName.textContent = name;
 
     editModal.show();
-    // Focus the name field after the modal animates in
     document.getElementById('editBitModal').addEventListener(
         'shown.bs.modal',
         () => editBitNameInput.select(),
