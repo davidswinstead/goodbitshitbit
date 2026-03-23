@@ -462,7 +462,7 @@ function h(mixed $v): string
                                     <button type="button"
                                             class="btn btn-sm btn-link btn-edit p-0"
                                             title="Edit bit"
-                                            onclick="openEditModal(<?= (int)$bit['id'] ?>, <?= json_encode($bit['name'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>)"
+                                            onclick='openEditModal(<?= (int)$bit['id'] ?>, <?= json_encode($bit['name'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>)'
                                     >&#9999;&#65039;</button>
                                 </td>
                                 <td class="fw-semibold"><?= h($bit['name']) ?></td>
