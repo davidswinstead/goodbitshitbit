@@ -606,7 +606,7 @@ function h(mixed $v): string
         <div class="modal-content">
             <div class="modal-header">
                 <h5 class="modal-title" id="editBitModalLabel">&#9999;&#65039; Edit Bit</h5>
-                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                <button type="button" class="btn-close" id="closeEditModalBtn" aria-label="Close"></button>
             </div>
 
             <!-- Rename form -->
@@ -622,7 +622,7 @@ function h(mixed $v): string
                     <button type="button" class="btn btn-outline-danger btn-sm"
                             id="showDeleteConfirmBtn">Delete this bit&hellip;</button>
                     <div class="d-flex gap-2">
-                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="button" class="btn btn-secondary" id="cancelRenameBtn">Cancel</button>
                         <button type="submit" class="btn btn-primary">Save Name</button>
                     </div>
                 </div>
@@ -743,7 +743,9 @@ document.addEventListener('DOMContentLoaded', () => {
 // Bootstrap loads AFTER this script tag, so initialise the modal lazily
 // the first time openEditModal() is called rather than at parse time.
 let editModal = null;
+let modalBackdrop = null;
 
+const editModalEl        = document.getElementById('editBitModal');
 const editBitIdInput     = document.getElementById('editBitId');
 const editBitNameInput   = document.getElementById('editBitName');
 const deleteBitIdInput   = document.getElementById('deleteBitId');
@@ -751,11 +753,47 @@ const deleteConfirmName  = document.getElementById('deleteConfirmName');
 const deleteConfirmPanel = document.getElementById('deleteConfirmPanel');
 const renameForm         = document.getElementById('renameForm');
 
-function openEditModal(id, name) {
-    if (!editModal) {
-        editModal = new bootstrap.Modal(document.getElementById('editBitModal'));
+function showEditModal() {
+    if (window.bootstrap && typeof window.bootstrap.Modal === 'function') {
+        if (!editModal) {
+            editModal = new window.bootstrap.Modal(editModalEl);
+        }
+        editModal.show();
+        return;
     }
 
+    // Fallback when Bootstrap JS is unavailable
+    editModalEl.style.display = 'block';
+    editModalEl.classList.add('show');
+    editModalEl.removeAttribute('aria-hidden');
+    document.body.classList.add('modal-open');
+
+    if (!modalBackdrop) {
+        modalBackdrop = document.createElement('div');
+        modalBackdrop.className = 'modal-backdrop fade show';
+        document.body.appendChild(modalBackdrop);
+    }
+}
+
+function hideEditModal() {
+    if (editModal) {
+        editModal.hide();
+        return;
+    }
+
+    // Fallback when Bootstrap JS is unavailable
+    editModalEl.classList.remove('show');
+    editModalEl.style.display = 'none';
+    editModalEl.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('modal-open');
+
+    if (modalBackdrop) {
+        modalBackdrop.remove();
+        modalBackdrop = null;
+    }
+}
+
+function openEditModal(id, name) {
     // Reset to rename view
     deleteConfirmPanel.classList.add('d-none');
     renameForm.classList.remove('d-none');
@@ -765,12 +803,8 @@ function openEditModal(id, name) {
     editBitNameInput.value = name;
     deleteConfirmName.textContent = name;
 
-    editModal.show();
-    document.getElementById('editBitModal').addEventListener(
-        'shown.bs.modal',
-        () => editBitNameInput.select(),
-        { once: true }
-    );
+    showEditModal();
+    setTimeout(() => editBitNameInput.select(), 50);
 }
 
 // Keep the delete confirm name in sync if the user edits the name field
@@ -788,6 +822,23 @@ document.getElementById('showDeleteConfirmBtn').addEventListener('click', () => 
 document.getElementById('cancelDeleteBtn').addEventListener('click', () => {
     deleteConfirmPanel.classList.add('d-none');
     renameForm.classList.remove('d-none');
+});
+
+document.getElementById('cancelRenameBtn').addEventListener('click', hideEditModal);
+document.getElementById('closeEditModalBtn').addEventListener('click', hideEditModal);
+
+// Fallback close when clicking outside the dialog
+editModalEl.addEventListener('click', (e) => {
+    if (e.target === editModalEl) {
+        hideEditModal();
+    }
+});
+
+// Fallback Escape key support
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && editModalEl.classList.contains('show')) {
+        hideEditModal();
+    }
 });
 </script>
 
