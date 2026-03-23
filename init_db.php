@@ -60,15 +60,18 @@ try {
     exit("[FAIL] Database error: " . $e->getMessage() . "\n");
 }
 
-// ── 2. Generate .htpasswd with bcrypt hash ───────────────────────────────────
+// ── 2. Generate .htpasswd with Apache SHA1 hash ───────────────────────────────
 //
-//  Apache 2.4+ supports bcrypt ($2y$) natively via mod_authn_file.
-//  The hash is re-generated each time init_db.php is run (new random salt).
-//  The user-visible instruction is: username=david, password=smeghead.
+//  Format: {SHA}<base64(sha1(password))>
+//  This is supported by ALL Apache versions via mod_authn_file without any
+//  additional compile-time options — unlike bcrypt ($2y$) which requires
+//  Apache to be built with --with-crypto (not available on most cPanel hosts).
+//  NOTE: SHA1 is sufficient for Basic Auth over HTTPS (the transport layer
+//  provides the real security; the hash just prevents plaintext in the file).
 
 $htpasswdUser = 'david';
 $htpasswdPass = 'smeghead';
-$hash         = password_hash($htpasswdPass, PASSWORD_BCRYPT, ['cost' => 10]);
+$hash         = '{SHA}' . base64_encode(sha1($htpasswdPass, true));
 
 file_put_contents($htpwPath, "$htpasswdUser:$hash\n");
 @chmod($htpwPath, 0640); // no-op on Windows; restricts to owner+group on Linux/Mac
