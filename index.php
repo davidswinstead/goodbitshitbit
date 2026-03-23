@@ -83,6 +83,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+    // ── Rename a bit ──────────────────────────────────────────────────────────
+    if ($action === 'rename_bit') {
+        $id      = (int)($_POST['bit_id'] ?? 0);
+        $newName = trim($_POST['new_name'] ?? '');
+        if ($id <= 0) {
+            $flash = ['type' => 'danger', 'html' => 'Invalid bit ID.'];
+        } elseif ($newName === '') {
+            $flash = ['type' => 'danger', 'html' => 'Bit name cannot be empty.'];
+        } elseif (mb_strlen($newName) > 200) {
+            $flash = ['type' => 'danger', 'html' => 'Bit name is too long (max 200 chars).'];
+        } else {
+            try {
+                $st = db()->prepare('UPDATE bits SET name = :name WHERE id = :id');
+                $st->execute([':name' => $newName, ':id' => $id]);
+                $flash = ['type' => 'success',
+                          'html' => 'Bit renamed to <strong>' . htmlspecialchars($newName) . '</strong>.'];
+            } catch (Exception $e) {
+                $msg   = str_contains($e->getMessage(), 'UNIQUE')
+                    ? 'A bit with that name already exists.'
+                    : htmlspecialchars($e->getMessage());
+                $flash = ['type' => 'danger', 'html' => $msg];
+            }
+        }
+    }
+
+    // ── Delete a bit ──────────────────────────────────────────────────────────
+    if ($action === 'delete_bit') {
+        $id = (int)($_POST['bit_id'] ?? 0);
+        if ($id <= 0) {
+            $flash = ['type' => 'danger', 'html' => 'Invalid bit ID.'];
+        } else {
+            try {
+                db()->beginTransaction();
+                // Delete performances first (no ON DELETE CASCADE in schema)
+                $st = db()->prepare('DELETE FROM performances WHERE bit_id = :id');
+                $st->execute([':id' => $id]);
+                $st = db()->prepare('DELETE FROM bits WHERE id = :id');
+                $st->execute([':id' => $id]);
+                db()->commit();
+                $flash = ['type' => 'success', 'html' => 'Bit and all its performance history deleted.'];
+            } catch (Exception $e) {
+                try { db()->rollBack(); } catch (Exception) {}
+                $flash = ['type' => 'danger', 'html' => htmlspecialchars($e->getMessage())];
+            }
+        }
+    }
+
     // ── Log a show ───────────────────────────────────────────────────────────
     if ($action === 'log_show') {
         try {
@@ -293,6 +340,8 @@ function h(mixed $v): string
         .match-tie  { color: #6c757d; }
         .delta-pos  { color: #198754; }
         .delta-neg  { color: #dc3545; }
+        .btn-edit   { opacity: .55; transition: opacity .15s; }
+        .btn-edit:hover { opacity: 1; }
     </style>
 </head>
 <body>
@@ -383,12 +432,13 @@ function h(mixed $v): string
                             <th><?= sortLink('last_performed_date', 'Last Performed',  $sortCol, $sortDir) ?></th>
                             <th>Best PPM</th>
                             <th>Avg PPM</th>
+                            <th style="width:2.5rem"></th>
                         </tr>
                     </thead>
                     <tbody>
                         <?php if (empty($allBits)): ?>
                             <tr>
-                                <td colspan="7" class="text-center text-muted py-4">
+                                <td colspan="8" class="text-center text-muted py-4">
                                     No bits yet — add some using the form below.
                                 </td>
                             </tr>
@@ -418,6 +468,13 @@ function h(mixed $v): string
                                 <td><?= $bit['last_performed_date'] ? h($bit['last_performed_date']) : '<span class="text-muted">—</span>' ?></td>
                                 <td><?= $bestPpm ?></td>
                                 <td><?= $avgPpm ?></td>
+                                <td class="text-center">
+                                    <button type="button"
+                                            class="btn btn-sm btn-link btn-edit p-0"
+                                            title="Edit bit"
+                                            onclick="openEditModal(<?= (int)$bit['id'] ?>, <?= json_encode($bit['name'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>)"
+                                    >&#9999;&#65039;</button>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
@@ -543,6 +600,58 @@ function h(mixed $v): string
 
 </div><!-- /container -->
 
+<!-- ── Edit Bit Modal ───────────────────────────────────────────────────────── -->
+<div class="modal fade" id="editBitModal" tabindex="-1" aria-labelledby="editBitModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="editBitModalLabel">&#9999;&#65039; Edit Bit</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+
+            <!-- Rename form -->
+            <form method="POST" id="renameForm">
+                <input type="hidden" name="action" value="rename_bit">
+                <input type="hidden" name="bit_id" id="editBitId">
+                <div class="modal-body">
+                    <label class="form-label fw-semibold" for="editBitName">Bit Name</label>
+                    <input type="text" id="editBitName" name="new_name"
+                           class="form-control" maxlength="200" required autocomplete="off">
+                </div>
+                <div class="modal-footer d-flex justify-content-between">
+                    <button type="button" class="btn btn-outline-danger btn-sm"
+                            id="showDeleteConfirmBtn">Delete this bit&hellip;</button>
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save Name</button>
+                    </div>
+                </div>
+            </form>
+
+            <!-- Delete confirmation (hidden until requested) -->
+            <div id="deleteConfirmPanel" class="d-none">
+                <div class="modal-body border-top">
+                    <div class="alert alert-danger mb-0">
+                        <strong>Delete &ldquo;<span id="deleteConfirmName"></span>&rdquo;?</strong><br>
+                        This will permanently remove the bit <em>and all its performance history</em>.
+                        This cannot be undone.
+                    </div>
+                </div>
+                <form method="POST">
+                    <input type="hidden" name="action" value="delete_bit">
+                    <input type="hidden" name="bit_id" id="deleteBitId">
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary btn-sm"
+                                id="cancelDeleteBtn">Cancel</button>
+                        <button type="submit" class="btn btn-danger">Yes, delete permanently</button>
+                    </div>
+                </form>
+            </div>
+
+        </div>
+    </div>
+</div>
+
 <!-- ── JavaScript: dynamic bit-row builder ─────────────────────────────────── -->
 <script>
 'use strict';
@@ -627,6 +736,52 @@ document.getElementById('showForm').addEventListener('submit', function (e) {
 // Initialise with 3 rows on page load
 document.addEventListener('DOMContentLoaded', () => {
     for (let i = 0; i < 3; i++) addBitRow();
+});
+
+// ── Edit Bit Modal ────────────────────────────────────────────────────────────
+
+const editModal          = new bootstrap.Modal(document.getElementById('editBitModal'));
+const editBitIdInput     = document.getElementById('editBitId');
+const editBitNameInput   = document.getElementById('editBitName');
+const deleteBitIdInput   = document.getElementById('deleteBitId');
+const deleteConfirmName  = document.getElementById('deleteConfirmName');
+const deleteConfirmPanel = document.getElementById('deleteConfirmPanel');
+const renameForm         = document.getElementById('renameForm');
+
+function openEditModal(id, name) {
+    // Reset to rename view
+    deleteConfirmPanel.classList.add('d-none');
+    renameForm.classList.remove('d-none');
+
+    editBitIdInput.value   = id;
+    deleteBitIdInput.value = id;
+    editBitNameInput.value = name;
+    deleteConfirmName.textContent = name;
+
+    editModal.show();
+    // Focus the name field after the modal animates in
+    document.getElementById('editBitModal').addEventListener(
+        'shown.bs.modal',
+        () => editBitNameInput.select(),
+        { once: true }
+    );
+}
+
+// Keep the delete confirm name in sync if the user edits the name field
+editBitNameInput.addEventListener('input', () => {
+    deleteConfirmName.textContent = editBitNameInput.value || '(unnamed)';
+});
+
+// Show delete confirmation panel
+document.getElementById('showDeleteConfirmBtn').addEventListener('click', () => {
+    renameForm.classList.add('d-none');
+    deleteConfirmPanel.classList.remove('d-none');
+});
+
+// Cancel delete — go back to rename view
+document.getElementById('cancelDeleteBtn').addEventListener('click', () => {
+    deleteConfirmPanel.classList.add('d-none');
+    renameForm.classList.remove('d-none');
 });
 </script>
 
