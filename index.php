@@ -291,12 +291,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // ── Dashboard data ────────────────────────────────────────────────────────────
 
-$allowedSortCols = ['name', 'current_elo', 'times_performed', 'last_performed_date'];
+$allowedSortCols = [
+    'name',
+    'current_elo',
+    'times_performed',
+    'last_performed_date',
+    'best_pps',
+    'avg_pps',
+    'avg_length_secs'
+];
 $sortCol = in_array($_GET['sort'] ?? '', $allowedSortCols, true) ? $_GET['sort'] : 'current_elo';
 $sortDir = strtoupper($_GET['dir'] ?? 'DESC') === 'ASC' ? 'ASC' : 'DESC';
 
 // Safe because $sortCol is whitelisted above
-$allBits      = db()->query("SELECT * FROM bits ORDER BY $sortCol $sortDir")->fetchAll(PDO::FETCH_ASSOC);
+$sql = "
+    SELECT
+        b.*,
+        MAX(p.calculated_ppm) AS best_pps,
+        AVG(p.calculated_ppm) AS avg_pps,
+        AVG(p.duration_mins)  AS avg_length_secs,
+        COUNT(p.id)           AS perf_count
+    FROM bits b
+    LEFT JOIN performances p ON p.bit_id = b.id
+    GROUP BY b.id
+    ORDER BY $sortCol $sortDir
+";
+$allBits = db()->query($sql)->fetchAll(PDO::FETCH_ASSOC);
+
+$testedBits = array_values(array_filter($allBits, fn($b) => (int)$b['perf_count'] > 0));
+$untestedBits = array_values(array_filter($allBits, fn($b) => (int)$b['perf_count'] === 0));
 
 // Dropdown list (always alpha order for ergonomics)
 $dropdownBits = db()->query('SELECT id, name FROM bits ORDER BY name COLLATE NOCASE')->fetchAll(PDO::FETCH_ASSOC);
@@ -414,11 +437,11 @@ function h(mixed $v): string
         </div>
     <?php endif; ?>
 
-    <!-- ── Leaderboard ── -->
+    <!-- ── Leaderboard: Tested Bits ── -->
     <div class="card mb-4 shadow-sm">
         <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
-            <h5 class="mb-0">&#127942; Leaderboard</h5>
-            <small class="text-white-50"><?= count($allBits) ?> bit(s) tracked</small>
+            <h5 class="mb-0">&#127942; Tested Bits</h5>
+            <small class="text-white-50"><?= count($testedBits) ?> tested / <?= count($allBits) ?> total</small>
         </div>
         <div class="card-body p-0">
             <div class="table-responsive">
@@ -427,32 +450,28 @@ function h(mixed $v): string
                         <tr>
                             <th style="width:3rem">#</th>
                             <th style="width:2.5rem"></th>
-                            <th><?= sortLink('name',                'Bit Name',        $sortCol, $sortDir) ?></th>
-                            <th><?= sortLink('current_elo',         'Elo Rating',       $sortCol, $sortDir) ?></th>
-                            <th><?= sortLink('times_performed',     'Performances',    $sortCol, $sortDir) ?></th>
-                            <th><?= sortLink('last_performed_date', 'Last Performed',  $sortCol, $sortDir) ?></th>
-                            <th>Best PPS</th>
-                            <th>Avg PPS</th>
+                            <th><?= sortLink('name',                'Bit Name',           $sortCol, $sortDir) ?></th>
+                            <th><?= sortLink('current_elo',         'Elo Rating',         $sortCol, $sortDir) ?></th>
+                            <th><?= sortLink('times_performed',     'Performances',       $sortCol, $sortDir) ?></th>
+                            <th><?= sortLink('last_performed_date', 'Last Performed',     $sortCol, $sortDir) ?></th>
+                            <th><?= sortLink('best_pps',            'Best PPS',           $sortCol, $sortDir) ?></th>
+                            <th><?= sortLink('avg_pps',             'Avg PPS',            $sortCol, $sortDir) ?></th>
+                            <th><?= sortLink('avg_length_secs',     'Avg Length (secs)',  $sortCol, $sortDir) ?></th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php if (empty($allBits)): ?>
+                        <?php if (empty($testedBits)): ?>
                             <tr>
-                                <td colspan="8" class="text-center text-muted py-4">
-                                    No bits yet — add some using the form below.
+                                <td colspan="9" class="text-center text-muted py-4">
+                                    No tested bits yet — log at least one show.
                                 </td>
                             </tr>
                         <?php endif; ?>
-                        <?php foreach ($allBits as $rank => $bit): ?>
+                        <?php foreach ($testedBits as $rank => $bit): ?>
                             <?php
-                                $ppmSt = db()->prepare(
-                                    'SELECT MAX(calculated_ppm) AS best, AVG(calculated_ppm) AS avg
-                                       FROM performances WHERE bit_id = :id'
-                                );
-                                $ppmSt->execute([':id' => $bit['id']]);
-                                $ppmRow  = $ppmSt->fetch(PDO::FETCH_ASSOC);
-                                $bestPpm = $ppmRow['best'] !== null ? number_format((float)$ppmRow['best'], 2) : '—';
-                                $avgPpm  = $ppmRow['avg']  !== null ? number_format((float)$ppmRow['avg'],  2) : '—';
+                                $bestPps = $bit['best_pps'] !== null ? number_format((float)$bit['best_pps'], 2) : '—';
+                                $avgPps  = $bit['avg_pps'] !== null ? number_format((float)$bit['avg_pps'], 2) : '—';
+                                $avgLen  = $bit['avg_length_secs'] !== null ? number_format((float)$bit['avg_length_secs'], 1) : '—';
                                 $elo     = (float)$bit['current_elo'];
                                 $eloBg   = $elo >= 1100 ? 'bg-success' : ($elo >= 1000 ? 'bg-primary' : 'bg-secondary');
                             ?>
@@ -473,8 +492,75 @@ function h(mixed $v): string
                                 </td>
                                 <td><?= (int)$bit['times_performed'] ?></td>
                                 <td><?= $bit['last_performed_date'] ? h($bit['last_performed_date']) : '<span class="text-muted">—</span>' ?></td>
-                                <td><?= $bestPpm ?></td>
-                                <td><?= $avgPpm ?></td>
+                                <td><?= $bestPps ?></td>
+                                <td><?= $avgPps ?></td>
+                                <td><?= $avgLen ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── Leaderboard: Untested Bits ── -->
+    <div class="card mb-4 shadow-sm">
+        <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">🧪 Untested Bits</h5>
+            <small class="text-white-50"><?= count($untestedBits) ?> untested</small>
+        </div>
+        <div class="card-body p-0">
+            <div class="table-responsive">
+                <table class="table table-striped table-hover align-middle mb-0">
+                    <thead class="table-dark">
+                        <tr>
+                            <th style="width:3rem">#</th>
+                            <th style="width:2.5rem"></th>
+                            <th><?= sortLink('name',                'Bit Name',           $sortCol, $sortDir) ?></th>
+                            <th><?= sortLink('current_elo',         'Elo Rating',         $sortCol, $sortDir) ?></th>
+                            <th><?= sortLink('times_performed',     'Performances',       $sortCol, $sortDir) ?></th>
+                            <th><?= sortLink('last_performed_date', 'Last Performed',     $sortCol, $sortDir) ?></th>
+                            <th><?= sortLink('best_pps',            'Best PPS',           $sortCol, $sortDir) ?></th>
+                            <th><?= sortLink('avg_pps',             'Avg PPS',            $sortCol, $sortDir) ?></th>
+                            <th><?= sortLink('avg_length_secs',     'Avg Length (secs)',  $sortCol, $sortDir) ?></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if (empty($untestedBits)): ?>
+                            <tr>
+                                <td colspan="9" class="text-center text-muted py-4">
+                                    No untested bits.
+                                </td>
+                            </tr>
+                        <?php endif; ?>
+                        <?php foreach ($untestedBits as $rank => $bit): ?>
+                            <?php
+                                $bestPps = $bit['best_pps'] !== null ? number_format((float)$bit['best_pps'], 2) : '—';
+                                $avgPps  = $bit['avg_pps'] !== null ? number_format((float)$bit['avg_pps'], 2) : '—';
+                                $avgLen  = $bit['avg_length_secs'] !== null ? number_format((float)$bit['avg_length_secs'], 1) : '—';
+                                $elo     = (float)$bit['current_elo'];
+                                $eloBg   = $elo >= 1100 ? 'bg-success' : ($elo >= 1000 ? 'bg-primary' : 'bg-secondary');
+                            ?>
+                            <tr>
+                                <td class="text-muted"><?= $rank + 1 ?></td>
+                                <td class="text-center">
+                                    <button type="button"
+                                            class="btn btn-sm btn-link btn-edit p-0"
+                                            title="Edit bit"
+                                            onclick='openEditModal(<?= (int)$bit['id'] ?>, <?= json_encode($bit['name'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>)'
+                                    >&#9999;&#65039;</button>
+                                </td>
+                                <td class="fw-semibold"><?= h($bit['name']) ?></td>
+                                <td>
+                                    <span class="badge <?= $eloBg ?> elo-badge fs-6">
+                                        <?= number_format($elo, 1) ?>
+                                    </span>
+                                </td>
+                                <td><?= (int)$bit['times_performed'] ?></td>
+                                <td><?= $bit['last_performed_date'] ? h($bit['last_performed_date']) : '<span class="text-muted">—</span>' ?></td>
+                                <td><?= $bestPps ?></td>
+                                <td><?= $avgPps ?></td>
+                                <td><?= $avgLen ?></td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
