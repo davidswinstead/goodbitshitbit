@@ -533,11 +533,12 @@ function h(mixed $v): string
 
     <!-- ── Leaderboard: Tested Bits ── -->
     <div class="card mb-4 shadow-sm">
-        <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+        <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center"
+             id="testedBitsHeader" data-toggle-target="testedBitsBody" style="cursor:pointer; user-select:none;">
             <h5 class="mb-0">&#127942; Tested Bits</h5>
             <small class="text-white-50"><?= count($testedBits) ?> tested / <?= count($allBits) ?> total</small>
         </div>
-        <div class="card-body p-0">
+        <div class="card-body p-0" id="testedBitsBody">
             <div class="table-responsive">
                 <table class="table table-striped table-hover align-middle mb-0">
                     <thead class="table-dark">
@@ -596,11 +597,12 @@ function h(mixed $v): string
 
     <!-- ── Leaderboard: Untested Bits ── -->
     <div class="card mb-4 shadow-sm">
-        <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center">
+        <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center"
+             id="untestedBitsHeader" data-toggle-target="untestedBitsBody" style="cursor:pointer; user-select:none;">
             <h5 class="mb-0">🧪 Untested Bits</h5>
             <small class="text-white-50"><?= count($untestedBits) ?> untested</small>
         </div>
-        <div class="card-body p-0">
+        <div class="card-body p-0" id="untestedBitsBody">
             <div class="table-responsive">
                 <table class="table table-striped table-hover align-middle mb-0">
                     <thead class="table-dark">
@@ -998,6 +1000,19 @@ function updateRowCount() {
         `${n} bits → ${matches} match-up${matches !== 1 ? 's' : ''}`;
 }
 
+function initBitTableCollapsibles() {
+    const headers = document.querySelectorAll('[data-toggle-target]');
+    headers.forEach((header) => {
+        header.addEventListener('click', () => {
+            const targetId = header.getAttribute('data-toggle-target');
+            if (!targetId) return;
+            const target = document.getElementById(targetId);
+            if (!target) return;
+            target.style.display = target.style.display === 'none' ? '' : 'none';
+        });
+    });
+}
+
 // Validate no duplicate bits on submit
 document.getElementById('showForm').addEventListener('submit', function (e) {
     const selects = [...this.querySelectorAll('select[name="bit_id[]"]')];
@@ -1011,6 +1026,7 @@ document.getElementById('showForm').addEventListener('submit', function (e) {
 // Initialise with 3 rows on page load
 document.addEventListener('DOMContentLoaded', () => {
     for (let i = 0; i < 3; i++) addBitRow();
+    initBitTableCollapsibles();
 });
 
 // ── Edit Bit Modal ────────────────────────────────────────────────────────────
