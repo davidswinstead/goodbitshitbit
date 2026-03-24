@@ -431,8 +431,8 @@ function h(mixed $v): string
                             <th><?= sortLink('current_elo',         'Elo Rating',       $sortCol, $sortDir) ?></th>
                             <th><?= sortLink('times_performed',     'Performances',    $sortCol, $sortDir) ?></th>
                             <th><?= sortLink('last_performed_date', 'Last Performed',  $sortCol, $sortDir) ?></th>
-                            <th>Best PPM</th>
-                            <th>Avg PPM</th>
+                            <th>Best PPS</th>
+                            <th>Avg PPS</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -522,7 +522,7 @@ function h(mixed $v): string
                         <!-- Column headers for bit rows -->
                         <div class="row g-2 mb-1 text-muted small">
                             <div class="col-5">Bit</div>
-                            <div class="col-3">Duration (mins)</div>
+                            <div class="col-3">Duration (secs)</div>
                             <div class="col-4">P-Line Score</div>
                         </div>
 
@@ -537,7 +537,7 @@ function h(mixed $v): string
                         </div>
 
                         <div class="alert alert-info py-2 small mb-3">
-                            <strong>PPM</strong> = Score ÷ Duration.
+                            <strong>PPS</strong> = Score ÷ Duration (seconds).
                             Round-robin Elo (K=40) runs across all selected bits simultaneously.
                         </div>
 
@@ -560,7 +560,7 @@ function h(mixed $v): string
                         <tr>
                             <th>Date</th>
                             <th>Bit</th>
-                            <th class="text-end">Duration (mins)</th>
+                            <th class="text-end">Duration (secs)</th>
                             <th class="text-end">Score</th>
                             <th class="text-end">PPM</th>
                         </tr>
@@ -698,7 +698,7 @@ function addBitRow(selectedId = 0) {
         </div>
         <div class="col-3">
             <input type="number" name="duration[]" class="form-control"
-                   placeholder="e.g. 4.5" step="0.1" min="0.1" max="60" required>
+                   placeholder="e.g. 80" step="1" min="1" max="3600" required>
         </div>
         <div class="col-4">
             <input type="number" name="score[]" class="form-control"
