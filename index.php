@@ -552,7 +552,7 @@ function h(mixed $v): string
                             <th><?= sortLink('last_performed_date', 'Last Performed',     $sortCol, $sortDir) ?></th>
                             <th><?= sortLink('best_pps',            'Best PPS',           $sortCol, $sortDir) ?></th>
                             <th><?= sortLink('avg_pps',             'Avg PPS',            $sortCol, $sortDir) ?></th>
-                            <th><?= sortLink('avg_length_secs',     'Avg Length (secs)',  $sortCol, $sortDir) ?></th>
+                            <th><?= sortLink('avg_length_secs',     'Avg Secs',           $sortCol, $sortDir) ?></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -618,7 +618,7 @@ function h(mixed $v): string
                             <th><?= sortLink('last_performed_date', 'Last Performed',     $sortCol, $sortDir) ?></th>
                             <th><?= sortLink('best_pps',            'Best PPS',           $sortCol, $sortDir) ?></th>
                             <th><?= sortLink('avg_pps',             'Avg PPS',            $sortCol, $sortDir) ?></th>
-                            <th><?= sortLink('avg_length_secs',     'Avg Length (secs)',  $sortCol, $sortDir) ?></th>
+                            <th><?= sortLink('avg_length_secs',     'Avg Secs',           $sortCol, $sortDir) ?></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -772,27 +772,20 @@ function h(mixed $v): string
                             <tr class="table-dark">
                                 <td colspan="4" class="py-2">
                                     <div class="d-flex align-items-center gap-2 flex-wrap">
+                                        <button type="button"
+                                                class="btn btn-sm btn-link btn-edit p-0 text-white text-decoration-none"
+                                                title="Edit gig"
+                                                onclick='openEditGigModal(<?= (int)$gig['id'] ?>, <?= json_encode($gig['gig_date'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= json_encode($gig['gig_name'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= json_encode($gig['youtube_url'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= $perfCount ?>)'
+                                        >&#9999;&#65039;</button>
                                         <strong><?= h($gig['gig_date']) ?></strong>
                                         <span class="text-white-50">&mdash;</span>
                                         <span><?= h($gig['gig_name']) ?></span>
                                         <?php if ($gig['youtube_url'] !== '' && str_starts_with($gig['youtube_url'], 'https://')): ?>
                                             <a href="<?= h($gig['youtube_url']) ?>"
                                                target="_blank" rel="noopener noreferrer"
-                                               class="text-danger" title="Watch recording">&#9654;&#65039;</a>
+                                               class="text-danger text-decoration-none" title="Watch recording">&#9654;&#65039;</a>
                                         <?php endif; ?>
                                         <span class="badge bg-secondary"><?= $perfCount ?> bit<?= $perfCount !== 1 ? 's' : '' ?> compared</span>
-                                        <div class="ms-auto d-flex gap-2">
-                                            <button type="button"
-                                                    class="btn btn-sm btn-link btn-edit p-0 text-white"
-                                                    title="Edit gig"
-                                                    onclick='openEditGigModal(<?= (int)$gig['id'] ?>, <?= json_encode($gig['gig_date'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= json_encode($gig['gig_name'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= json_encode($gig['youtube_url'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>)'
-                                            >&#9999;&#65039;</button>
-                                            <button type="button"
-                                                    class="btn btn-sm btn-link p-0 text-danger"
-                                                    title="Delete gig"
-                                                    onclick='openDeleteGigModal(<?= (int)$gig['id'] ?>, <?= json_encode($gig['gig_name'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= $perfCount ?>)'
-                                            >&times;</button>
-                                        </div>
                                     </div>
                                 </td>
                             </tr>
@@ -875,6 +868,7 @@ function h(mixed $v): string
             <form method="POST">
                 <input type="hidden" name="action" value="edit_gig">
                 <input type="hidden" name="gig_id" id="editGigId">
+                <input type="hidden" id="editGigPerfCount">
                 <div class="modal-header">
                     <h5 class="modal-title" id="editGigModalLabel">&#9999;&#65039; Edit Gig</h5>
                     <button type="button" class="btn-close" id="closeEditGigModalBtn" aria-label="Close"></button>
@@ -899,9 +893,14 @@ function h(mixed $v): string
                                placeholder="https://youtu.be/...">
                     </div>
                 </div>
-                <div class="modal-footer">
-                    <button type="button" class="btn btn-secondary" id="cancelEditGigBtn">Cancel</button>
-                    <button type="submit" class="btn btn-primary">Save</button>
+                <div class="modal-footer d-flex justify-content-between">
+                    <button type="button" class="btn btn-outline-danger btn-sm" id="openDeleteGigFromEditBtn">
+                        Delete this gig&hellip;
+                    </button>
+                    <div class="d-flex gap-2">
+                        <button type="button" class="btn btn-secondary" id="cancelEditGigBtn">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Save</button>
+                    </div>
                 </div>
             </form>
         </div>
@@ -1184,11 +1183,12 @@ function hideDeleteGigModal() {
     if (modalBackdrop) { modalBackdrop.remove(); modalBackdrop = null; }
 }
 
-function openEditGigModal(id, date, name, youtubeUrl) {
+function openEditGigModal(id, date, name, youtubeUrl, perfCount) {
     document.getElementById('editGigId').value      = id;
     document.getElementById('editGigDate').value    = date;
     document.getElementById('editGigName').value    = name;
     document.getElementById('editGigYoutube').value = youtubeUrl;
+    document.getElementById('editGigPerfCount').value = String(perfCount ?? 0);
     showEditGigModal();
     setTimeout(() => document.getElementById('editGigName').select(), 50);
 }
@@ -1204,6 +1204,13 @@ document.getElementById('cancelEditGigBtn').addEventListener('click',    hideEdi
 document.getElementById('closeEditGigModalBtn').addEventListener('click', hideEditGigModal);
 document.getElementById('cancelDeleteGigBtn').addEventListener('click',    hideDeleteGigModal);
 document.getElementById('closeDeleteGigModalBtn').addEventListener('click', hideDeleteGigModal);
+document.getElementById('openDeleteGigFromEditBtn').addEventListener('click', () => {
+    const id = Number(document.getElementById('editGigId').value || 0);
+    const name = document.getElementById('editGigName').value || '(unnamed)';
+    const perfCount = Number(document.getElementById('editGigPerfCount').value || 0);
+    hideEditGigModal();
+    openDeleteGigModal(id, name, perfCount);
+});
 
 editGigModalEl.addEventListener('click',   (e) => { if (e.target === editGigModalEl)   hideEditGigModal(); });
 deleteGigModalEl.addEventListener('click', (e) => { if (e.target === deleteGigModalEl) hideDeleteGigModal(); });
