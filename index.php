@@ -364,7 +364,6 @@ $allowedSortCols = [
     'current_elo',
     'times_performed',
     'last_performed_date',
-    'best_pps',
     'avg_pps',
     'avg_length_secs'
 ];
@@ -376,7 +375,6 @@ $sql = "
     SELECT
         b.*,
         MAX(g.gig_date)       AS last_performed_date,
-        MAX(p.calculated_ppm) AS best_pps,
         AVG(p.calculated_ppm) AS avg_pps,
         AVG(p.duration_mins)  AS avg_length_secs,
         COUNT(p.id)           AS perf_count
@@ -550,7 +548,6 @@ function h(mixed $v): string
                             <th><?= sortLink('current_elo',         'Elo Rating',         $sortCol, $sortDir) ?></th>
                             <th><?= sortLink('times_performed',     'Performances',       $sortCol, $sortDir) ?></th>
                             <th><?= sortLink('last_performed_date', 'Last Performed',     $sortCol, $sortDir) ?></th>
-                            <th><?= sortLink('best_pps',            'Best PPS',           $sortCol, $sortDir) ?></th>
                             <th><?= sortLink('avg_pps',             'Avg PPS',            $sortCol, $sortDir) ?></th>
                             <th><?= sortLink('avg_length_secs',     'Avg Secs',           $sortCol, $sortDir) ?></th>
                         </tr>
@@ -558,14 +555,13 @@ function h(mixed $v): string
                     <tbody>
                         <?php if (empty($testedBits)): ?>
                             <tr>
-                                <td colspan="9" class="text-center text-muted py-4">
+                                <td colspan="8" class="text-center text-muted py-4">
                                     No tested bits yet — log at least one show.
                                 </td>
                             </tr>
                         <?php endif; ?>
                         <?php foreach ($testedBits as $rank => $bit): ?>
                             <?php
-                                $bestPps = $bit['best_pps'] !== null ? number_format((float)$bit['best_pps'], 2) : '—';
                                 $avgPps  = $bit['avg_pps'] !== null ? number_format((float)$bit['avg_pps'], 2) : '—';
                                 $avgLen  = $bit['avg_length_secs'] !== null ? (string)((int)(ceil(((float)$bit['avg_length_secs']) / 5) * 5)) : '—';
                                 $elo     = (float)$bit['current_elo'];
@@ -588,7 +584,6 @@ function h(mixed $v): string
                                 </td>
                                 <td><?= (int)$bit['times_performed'] ?></td>
                                 <td><?= $bit['last_performed_date'] ? h($bit['last_performed_date']) : '<span class="text-muted">—</span>' ?></td>
-                                <td><?= $bestPps ?></td>
                                 <td><?= $avgPps ?></td>
                                 <td><?= $avgLen ?></td>
                             </tr>
@@ -616,7 +611,6 @@ function h(mixed $v): string
                             <th><?= sortLink('current_elo',         'Elo Rating',         $sortCol, $sortDir) ?></th>
                             <th><?= sortLink('times_performed',     'Performances',       $sortCol, $sortDir) ?></th>
                             <th><?= sortLink('last_performed_date', 'Last Performed',     $sortCol, $sortDir) ?></th>
-                            <th><?= sortLink('best_pps',            'Best PPS',           $sortCol, $sortDir) ?></th>
                             <th><?= sortLink('avg_pps',             'Avg PPS',            $sortCol, $sortDir) ?></th>
                             <th><?= sortLink('avg_length_secs',     'Avg Secs',           $sortCol, $sortDir) ?></th>
                         </tr>
@@ -624,14 +618,13 @@ function h(mixed $v): string
                     <tbody>
                         <?php if (empty($untestedBits)): ?>
                             <tr>
-                                <td colspan="9" class="text-center text-muted py-4">
+                                <td colspan="8" class="text-center text-muted py-4">
                                     No untested bits.
                                 </td>
                             </tr>
                         <?php endif; ?>
                         <?php foreach ($untestedBits as $rank => $bit): ?>
                             <?php
-                                $bestPps = $bit['best_pps'] !== null ? number_format((float)$bit['best_pps'], 2) : '—';
                                 $avgPps  = $bit['avg_pps'] !== null ? number_format((float)$bit['avg_pps'], 2) : '—';
                                 $avgLen  = $bit['avg_length_secs'] !== null ? (string)((int)(ceil(((float)$bit['avg_length_secs']) / 5) * 5)) : '—';
                                 $elo     = (float)$bit['current_elo'];
@@ -654,7 +647,6 @@ function h(mixed $v): string
                                 </td>
                                 <td><?= (int)$bit['times_performed'] ?></td>
                                 <td><?= $bit['last_performed_date'] ? h($bit['last_performed_date']) : '<span class="text-muted">—</span>' ?></td>
-                                <td><?= $bestPps ?></td>
                                 <td><?= $avgPps ?></td>
                                 <td><?= $avgLen ?></td>
                             </tr>
