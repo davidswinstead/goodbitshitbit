@@ -33,11 +33,19 @@ try {
 
     $pdo->exec(<<<SQL
         CREATE TABLE IF NOT EXISTS bits (
-            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-            name                TEXT    NOT NULL UNIQUE COLLATE NOCASE,
-            current_elo         REAL    NOT NULL DEFAULT 1000.0,
-            times_performed     INTEGER NOT NULL DEFAULT 0,
-            last_performed_date TEXT
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            name            TEXT    NOT NULL UNIQUE COLLATE NOCASE,
+            current_elo     REAL    NOT NULL DEFAULT 1000.0,
+            times_performed INTEGER NOT NULL DEFAULT 0
+        )
+    SQL);
+
+    $pdo->exec(<<<SQL
+        CREATE TABLE IF NOT EXISTS gigs (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            gig_date    TEXT    NOT NULL,
+            name        TEXT    NOT NULL,
+            youtube_url TEXT    NOT NULL DEFAULT ''
         )
     SQL);
 
@@ -45,15 +53,16 @@ try {
         CREATE TABLE IF NOT EXISTS performances (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
             bit_id              INTEGER NOT NULL REFERENCES bits(id),
-            show_date           TEXT    NOT NULL,
+            gig_id              INTEGER NOT NULL REFERENCES gigs(id),
             duration_mins       REAL    NOT NULL,
             total_p_line_score  REAL    NOT NULL,
             calculated_ppm      REAL    NOT NULL
         )
     SQL);
 
-    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_perf_bit ON performances(bit_id)');
-    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_perf_date ON performances(show_date)');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_perf_bit  ON performances(bit_id)');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_perf_gig  ON performances(gig_id)');
+    $pdo->exec('CREATE INDEX IF NOT EXISTS idx_gig_date  ON gigs(gig_date)');
 
     echo "[OK] Database created / verified: $dbPath\n";
 } catch (Exception $e) {

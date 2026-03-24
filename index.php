@@ -130,13 +130,66 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
+    // ── Edit a gig ────────────────────────────────────────────────────────────
+    if ($action === 'edit_gig') {
+        $id      = (int)($_POST['gig_id']      ?? 0);
+        $gigDate = trim($_POST['gig_date']     ?? '');
+        $gigName = trim($_POST['gig_name']     ?? '');
+        $gigYt   = trim($_POST['gig_youtube']  ?? '');
+        if ($id <= 0) {
+            $flash = ['type' => 'danger', 'html' => 'Invalid gig ID.'];
+        } elseif (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $gigDate)
+               || !checkdate((int)substr($gigDate,5,2),(int)substr($gigDate,8,2),(int)substr($gigDate,0,4))) {
+            $flash = ['type' => 'danger', 'html' => 'Invalid gig date.'];
+        } elseif ($gigName === '') {
+            $flash = ['type' => 'danger', 'html' => 'Gig name cannot be empty.'];
+        } elseif (mb_strlen($gigName) > 200) {
+            $flash = ['type' => 'danger', 'html' => 'Gig name is too long (max 200 chars).'];
+        } elseif ($gigYt !== '' && !str_starts_with($gigYt, 'https://')) {
+            $flash = ['type' => 'danger', 'html' => 'YouTube URL must start with https://.'];
+        } else {
+            try {
+                $st = db()->prepare(
+                    'UPDATE gigs SET gig_date = :d, name = :n, youtube_url = :y WHERE id = :id'
+                );
+                $st->execute([':d' => $gigDate, ':n' => $gigName, ':y' => $gigYt, ':id' => $id]);
+                $flash = ['type' => 'success', 'html' => 'Gig updated.'];
+            } catch (Exception $e) {
+                $flash = ['type' => 'danger', 'html' => htmlspecialchars($e->getMessage())];
+            }
+        }
+    }
+
+    // ── Delete a gig ──────────────────────────────────────────────────────────
+    if ($action === 'delete_gig') {
+        $id = (int)($_POST['gig_id'] ?? 0);
+        if ($id <= 0) {
+            $flash = ['type' => 'danger', 'html' => 'Invalid gig ID.'];
+        } else {
+            try {
+                db()->beginTransaction();
+                $st = db()->prepare('DELETE FROM performances WHERE gig_id = :id');
+                $st->execute([':id' => $id]);
+                $st = db()->prepare('DELETE FROM gigs WHERE id = :id');
+                $st->execute([':id' => $id]);
+                db()->commit();
+                $flash = ['type' => 'success', 'html' => 'Gig and all its performance records deleted.'];
+            } catch (Exception $e) {
+                try { db()->rollBack(); } catch (Exception) {}
+                $flash = ['type' => 'danger', 'html' => htmlspecialchars($e->getMessage())];
+            }
+        }
+    }
+
     // ── Log a show ───────────────────────────────────────────────────────────
     if ($action === 'log_show') {
         try {
-            $showDate  = $_POST['show_date']  ?? '';
-            $bitIds    = $_POST['bit_id']     ?? [];
-            $durations = $_POST['duration']   ?? [];
-            $scores    = $_POST['score']      ?? [];
+            $showDate  = $_POST['show_date']    ?? '';
+            $gigName   = trim($_POST['gig_name']    ?? '');
+            $gigYt     = trim($_POST['gig_youtube'] ?? '');
+            $bitIds    = $_POST['bit_id']       ?? [];
+            $durations = $_POST['duration']     ?? [];
+            $scores    = $_POST['score']        ?? [];
 
             // Validate date
             if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $showDate)
@@ -147,6 +200,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 )
             ) {
                 throw new InvalidArgumentException('Invalid show date.');
+            }
+
+            if ($gigName === '') {
+                throw new InvalidArgumentException('Gig name cannot be empty.');
+            }
+            if (mb_strlen($gigName) > 200) {
+                throw new InvalidArgumentException('Gig name is too long (max 200 chars).');
+            }
+            if ($gigYt !== '' && !str_starts_with($gigYt, 'https://')) {
+                throw new InvalidArgumentException('YouTube URL must start with https://.');
             }
 
             $n = count($bitIds);
@@ -244,33 +307,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // ── Apply all deltas atomically ──────────────────────────────────
             db()->beginTransaction();
 
+            // Create the gig record first, then link all performances to it
+            $st = db()->prepare(
+                'INSERT INTO gigs (gig_date, name, youtube_url) VALUES (:d, :n, :y)'
+            );
+            $st->execute([':d' => $showDate, ':n' => $gigName, ':y' => $gigYt]);
+            $gigId = (int)db()->lastInsertId();
+
             foreach ($bits as &$bit) {
                 $bit['new_elo'] = round($bit['pre_elo'] + $bit['elo_delta'], 1);
 
                 $st = db()->prepare(
                     'UPDATE bits
-                        SET current_elo         = :elo,
-                            times_performed     = times_performed + 1,
-                            last_performed_date = :date
+                        SET current_elo     = :elo,
+                            times_performed = times_performed + 1
                       WHERE id = :id'
                 );
                 $st->execute([
-                    ':elo'  => $bit['new_elo'],
-                    ':date' => $showDate,
-                    ':id'   => $bit['id'],
+                    ':elo' => $bit['new_elo'],
+                    ':id'  => $bit['id'],
                 ]);
 
                 $st = db()->prepare(
                     'INSERT INTO performances
-                         (bit_id, show_date, duration_mins, total_p_line_score, calculated_ppm)
-                     VALUES (:bid, :date, :dur, :sc, :ppm)'
+                         (bit_id, gig_id, duration_mins, total_p_line_score, calculated_ppm)
+                     VALUES (:bid, :gig, :dur, :sc, :ppm)'
                 );
                 $st->execute([
-                    ':bid'  => $bit['id'],
-                    ':date' => $showDate,
-                    ':dur'  => $bit['duration'],
-                    ':sc'   => $bit['raw_score'],
-                    ':ppm'  => $bit['ppm'],
+                    ':bid' => $bit['id'],
+                    ':gig' => $gigId,
+                    ':dur' => $bit['duration'],
+                    ':sc'  => $bit['raw_score'],
+                    ':ppm' => $bit['ppm'],
                 ]);
             }
             unset($bit); // break reference
@@ -307,22 +375,50 @@ $sortDir = strtoupper($_GET['dir'] ?? 'DESC') === 'ASC' ? 'ASC' : 'DESC';
 $sql = "
     SELECT
         b.*,
+        MAX(g.gig_date)       AS last_performed_date,
         MAX(p.calculated_ppm) AS best_pps,
         AVG(p.calculated_ppm) AS avg_pps,
         AVG(p.duration_mins)  AS avg_length_secs,
         COUNT(p.id)           AS perf_count
     FROM bits b
     LEFT JOIN performances p ON p.bit_id = b.id
+    LEFT JOIN gigs g ON p.gig_id = g.id
     GROUP BY b.id
     ORDER BY $sortCol $sortDir
 ";
 $allBits = db()->query($sql)->fetchAll(PDO::FETCH_ASSOC);
 
-$testedBits = array_values(array_filter($allBits, fn($b) => (int)$b['perf_count'] > 0));
+$testedBits   = array_values(array_filter($allBits, fn($b) => (int)$b['perf_count'] > 0));
 $untestedBits = array_values(array_filter($allBits, fn($b) => (int)$b['perf_count'] === 0));
 
 // Dropdown list (always alpha order for ergonomics)
 $dropdownBits = db()->query('SELECT id, name FROM bits ORDER BY name COLLATE NOCASE')->fetchAll(PDO::FETCH_ASSOC);
+
+// Performances grouped by gig, newest date first
+$perfRows = db()->query(
+    'SELECT g.id AS gig_id, g.gig_date, g.name AS gig_name, g.youtube_url,
+            p.id AS perf_id, p.duration_mins, p.total_p_line_score, p.calculated_ppm,
+            b.name AS bit_name
+       FROM gigs g
+       JOIN performances p ON p.gig_id = g.id
+       JOIN bits b ON p.bit_id = b.id
+      ORDER BY g.gig_date DESC, g.id DESC, p.id ASC'
+)->fetchAll(PDO::FETCH_ASSOC);
+
+$gigGroups = [];
+foreach ($perfRows as $row) {
+    $gid = $row['gig_id'];
+    if (!isset($gigGroups[$gid])) {
+        $gigGroups[$gid] = [
+            'id'          => $gid,
+            'gig_date'    => $row['gig_date'],
+            'gig_name'    => $row['gig_name'],
+            'youtube_url' => (string)($row['youtube_url'] ?? ''),
+            'perfs'       => [],
+        ];
+    }
+    $gigGroups[$gid]['perfs'][] = $row;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -605,6 +701,23 @@ function h(mixed $v): string
                                    value="<?= h(date('Y-m-d')) ?>" required>
                         </div>
 
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">Gig Name</label>
+                            <input type="text" name="gig_name" class="form-control"
+                                   placeholder="e.g. The Compass, Open Mic"
+                                   maxlength="200" required autocomplete="off">
+                        </div>
+
+                        <div class="mb-3">
+                            <label class="form-label fw-semibold">
+                                YouTube Recording
+                                <span class="fw-normal text-muted">(optional)</span>
+                            </label>
+                            <input type="url" name="gig_youtube" class="form-control"
+                                   placeholder="https://youtu.be/..."
+                                   maxlength="500" autocomplete="off">
+                        </div>
+
                         <!-- Column headers for bit rows -->
                         <div class="row g-2 mb-1 text-muted small">
                             <div class="col-5">Bit</div>
@@ -636,49 +749,66 @@ function h(mixed $v): string
         </div>
     </div>
 
-    <!-- ── Recent Performances ── -->
+    <!-- ── Performances by Gig ── -->
     <div class="card mt-4 shadow-sm">
-        <div class="card-header"><h5 class="mb-0">📈 Recent Performances (last 30)</h5></div>
+        <div class="card-header"><h5 class="mb-0">📈 Performances by Gig</h5></div>
         <div class="card-body p-0">
+            <?php if (empty($gigGroups)): ?>
+                <p class="text-center text-muted py-4 mb-0">No performances yet — log a show above.</p>
+            <?php else: ?>
             <div class="table-responsive">
-                <table class="table table-sm table-striped align-middle mb-0">
+                <table class="table table-sm align-middle mb-0">
                     <thead class="table-secondary">
                         <tr>
-                            <th>Date</th>
                             <th>Bit</th>
                             <th class="text-end">Duration (secs)</th>
                             <th class="text-end">Score</th>
-                            <th class="text-end">PPM</th>
+                            <th class="text-end">PPS</th>
                         </tr>
                     </thead>
                     <tbody>
-                        <?php
-                            $recQ = db()->query(
-                                'SELECT p.show_date, b.name,
-                                        p.duration_mins, p.total_p_line_score, p.calculated_ppm
-                                   FROM performances p
-                                   JOIN bits b ON p.bit_id = b.id
-                                  ORDER BY p.show_date DESC, p.id DESC
-                                  LIMIT 30'
-                            );
-                            $anyRecent = false;
-                            while ($row = $recQ->fetch(PDO::FETCH_ASSOC)):
-                                $anyRecent = true;
-                        ?>
-                        <tr>
-                            <td><?= h($row['show_date']) ?></td>
-                            <td><?= h($row['name']) ?></td>
-                            <td class="text-end"><?= number_format((float)$row['duration_mins'], 1) ?></td>
-                            <td class="text-end"><?= number_format((float)$row['total_p_line_score'], 1) ?></td>
-                            <td class="text-end fw-bold"><?= number_format((float)$row['calculated_ppm'], 2) ?></td>
-                        </tr>
-                        <?php endwhile; ?>
-                        <?php if (!$anyRecent): ?>
-                            <tr><td colspan="5" class="text-center text-muted py-3">No performances yet.</td></tr>
-                        <?php endif; ?>
+                        <?php foreach ($gigGroups as $gig): ?>
+                            <?php $perfCount = count($gig['perfs']); ?>
+                            <tr class="table-dark">
+                                <td colspan="4" class="py-2">
+                                    <div class="d-flex align-items-center gap-2 flex-wrap">
+                                        <strong><?= h($gig['gig_date']) ?></strong>
+                                        <span class="text-white-50">&mdash;</span>
+                                        <span><?= h($gig['gig_name']) ?></span>
+                                        <?php if ($gig['youtube_url'] !== '' && str_starts_with($gig['youtube_url'], 'https://')): ?>
+                                            <a href="<?= h($gig['youtube_url']) ?>"
+                                               target="_blank" rel="noopener noreferrer"
+                                               class="text-danger" title="Watch recording">&#9654;&#65039;</a>
+                                        <?php endif; ?>
+                                        <span class="badge bg-secondary"><?= $perfCount ?> bit<?= $perfCount !== 1 ? 's' : '' ?> compared</span>
+                                        <div class="ms-auto d-flex gap-2">
+                                            <button type="button"
+                                                    class="btn btn-sm btn-link btn-edit p-0 text-white"
+                                                    title="Edit gig"
+                                                    onclick='openEditGigModal(<?= (int)$gig['id'] ?>, <?= json_encode($gig['gig_date'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= json_encode($gig['gig_name'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= json_encode($gig['youtube_url'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>)'
+                                            >&#9999;&#65039;</button>
+                                            <button type="button"
+                                                    class="btn btn-sm btn-link p-0 text-danger"
+                                                    title="Delete gig"
+                                                    onclick='openDeleteGigModal(<?= (int)$gig['id'] ?>, <?= json_encode($gig['gig_name'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= $perfCount ?>)'
+                                            >&times;</button>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                            <?php foreach ($gig['perfs'] as $perf): ?>
+                            <tr>
+                                <td><?= h($perf['bit_name']) ?></td>
+                                <td class="text-end"><?= number_format((float)$perf['duration_mins'], 1) ?></td>
+                                <td class="text-end"><?= number_format((float)$perf['total_p_line_score'], 1) ?></td>
+                                <td class="text-end fw-bold"><?= number_format((float)$perf['calculated_ppm'], 2) ?></td>
+                            </tr>
+                            <?php endforeach; ?>
+                        <?php endforeach; ?>
                     </tbody>
                 </table>
             </div>
+            <?php endif; ?>
         </div>
     </div>
 
@@ -734,6 +864,74 @@ function h(mixed $v): string
                 </form>
             </div>
 
+        </div>
+    </div>
+</div>
+
+<!-- ── Edit Gig Modal ───────────────────────────────────────────────────────── -->
+<div class="modal fade" id="editGigModal" tabindex="-1" aria-labelledby="editGigModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form method="POST">
+                <input type="hidden" name="action" value="edit_gig">
+                <input type="hidden" name="gig_id" id="editGigId">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="editGigModalLabel">&#9999;&#65039; Edit Gig</h5>
+                    <button type="button" class="btn-close" id="closeEditGigModalBtn" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold" for="editGigDate">Date</label>
+                        <input type="date" id="editGigDate" name="gig_date" class="form-control" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold" for="editGigName">Gig Name</label>
+                        <input type="text" id="editGigName" name="gig_name"
+                               class="form-control" maxlength="200" required autocomplete="off">
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold" for="editGigYoutube">
+                            YouTube Recording
+                            <span class="fw-normal text-muted">(optional)</span>
+                        </label>
+                        <input type="url" id="editGigYoutube" name="gig_youtube"
+                               class="form-control" maxlength="500"
+                               placeholder="https://youtu.be/...">
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" id="cancelEditGigBtn">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+
+<!-- ── Delete Gig Confirmation Modal ───────────────────────────────────────── -->
+<div class="modal fade" id="deleteGigModal" tabindex="-1" aria-labelledby="deleteGigModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="deleteGigModalLabel">&#128465;&#65039; Delete Gig</h5>
+                <button type="button" class="btn-close" id="closeDeleteGigModalBtn" aria-label="Close"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-danger mb-0">
+                    <strong>Delete &ldquo;<span id="deleteGigName"></span>&rdquo;?</strong><br>
+                    This will permanently remove this gig and all
+                    <strong><span id="deleteGigPerfCount"></span> performance record(s)</strong> within it.<br>
+                    <em>Elo ratings will not be recalculated.</em>
+                </div>
+            </div>
+            <form method="POST">
+                <input type="hidden" name="action" value="delete_gig">
+                <input type="hidden" name="gig_id" id="deleteGigId">
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" id="cancelDeleteGigBtn">Cancel</button>
+                    <button type="submit" class="btn btn-danger">Yes, delete permanently</button>
+                </div>
+            </form>
         </div>
     </div>
 </div>
@@ -925,6 +1123,95 @@ document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && editModalEl.classList.contains('show')) {
         hideEditModal();
     }
+});
+
+// ── Edit Gig Modal ────────────────────────────────────────────────────────────
+
+const editGigModalEl   = document.getElementById('editGigModal');
+const deleteGigModalEl = document.getElementById('deleteGigModal');
+let bsEditGigModal    = null;
+let bsDeleteGigModal  = null;
+
+function showEditGigModal() {
+    if (window.bootstrap && typeof window.bootstrap.Modal === 'function') {
+        if (!bsEditGigModal) bsEditGigModal = new window.bootstrap.Modal(editGigModalEl);
+        bsEditGigModal.show();
+        return;
+    }
+    editGigModalEl.style.display = 'block';
+    editGigModalEl.classList.add('show');
+    editGigModalEl.removeAttribute('aria-hidden');
+    document.body.classList.add('modal-open');
+    if (!modalBackdrop) {
+        modalBackdrop = document.createElement('div');
+        modalBackdrop.className = 'modal-backdrop fade show';
+        document.body.appendChild(modalBackdrop);
+    }
+}
+
+function hideEditGigModal() {
+    if (bsEditGigModal) { bsEditGigModal.hide(); return; }
+    editGigModalEl.classList.remove('show');
+    editGigModalEl.style.display = 'none';
+    editGigModalEl.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('modal-open');
+    if (modalBackdrop) { modalBackdrop.remove(); modalBackdrop = null; }
+}
+
+function showDeleteGigModal() {
+    if (window.bootstrap && typeof window.bootstrap.Modal === 'function') {
+        if (!bsDeleteGigModal) bsDeleteGigModal = new window.bootstrap.Modal(deleteGigModalEl);
+        bsDeleteGigModal.show();
+        return;
+    }
+    deleteGigModalEl.style.display = 'block';
+    deleteGigModalEl.classList.add('show');
+    deleteGigModalEl.removeAttribute('aria-hidden');
+    document.body.classList.add('modal-open');
+    if (!modalBackdrop) {
+        modalBackdrop = document.createElement('div');
+        modalBackdrop.className = 'modal-backdrop fade show';
+        document.body.appendChild(modalBackdrop);
+    }
+}
+
+function hideDeleteGigModal() {
+    if (bsDeleteGigModal) { bsDeleteGigModal.hide(); return; }
+    deleteGigModalEl.classList.remove('show');
+    deleteGigModalEl.style.display = 'none';
+    deleteGigModalEl.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('modal-open');
+    if (modalBackdrop) { modalBackdrop.remove(); modalBackdrop = null; }
+}
+
+function openEditGigModal(id, date, name, youtubeUrl) {
+    document.getElementById('editGigId').value      = id;
+    document.getElementById('editGigDate').value    = date;
+    document.getElementById('editGigName').value    = name;
+    document.getElementById('editGigYoutube').value = youtubeUrl;
+    showEditGigModal();
+    setTimeout(() => document.getElementById('editGigName').select(), 50);
+}
+
+function openDeleteGigModal(id, name, perfCount) {
+    document.getElementById('deleteGigId').value              = id;
+    document.getElementById('deleteGigName').textContent      = name;
+    document.getElementById('deleteGigPerfCount').textContent = perfCount;
+    showDeleteGigModal();
+}
+
+document.getElementById('cancelEditGigBtn').addEventListener('click',    hideEditGigModal);
+document.getElementById('closeEditGigModalBtn').addEventListener('click', hideEditGigModal);
+document.getElementById('cancelDeleteGigBtn').addEventListener('click',    hideDeleteGigModal);
+document.getElementById('closeDeleteGigModalBtn').addEventListener('click', hideDeleteGigModal);
+
+editGigModalEl.addEventListener('click',   (e) => { if (e.target === editGigModalEl)   hideEditGigModal(); });
+deleteGigModalEl.addEventListener('click', (e) => { if (e.target === deleteGigModalEl) hideDeleteGigModal(); });
+
+document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (editGigModalEl.classList.contains('show'))   hideEditGigModal();
+    if (deleteGigModalEl.classList.contains('show')) hideDeleteGigModal();
 });
 </script>
 
