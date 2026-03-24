@@ -471,7 +471,7 @@ function h(mixed $v): string
                             <?php
                                 $bestPps = $bit['best_pps'] !== null ? number_format((float)$bit['best_pps'], 2) : '—';
                                 $avgPps  = $bit['avg_pps'] !== null ? number_format((float)$bit['avg_pps'], 2) : '—';
-                                $avgLen  = $bit['avg_length_secs'] !== null ? number_format((float)$bit['avg_length_secs'], 1) : '—';
+                                $avgLen  = $bit['avg_length_secs'] !== null ? (string)((int)(ceil(((float)$bit['avg_length_secs']) / 5) * 5)) : '—';
                                 $elo     = (float)$bit['current_elo'];
                                 $eloBg   = $elo >= 1100 ? 'bg-success' : ($elo >= 1000 ? 'bg-primary' : 'bg-secondary');
                             ?>
@@ -537,7 +537,7 @@ function h(mixed $v): string
                             <?php
                                 $bestPps = $bit['best_pps'] !== null ? number_format((float)$bit['best_pps'], 2) : '—';
                                 $avgPps  = $bit['avg_pps'] !== null ? number_format((float)$bit['avg_pps'], 2) : '—';
-                                $avgLen  = $bit['avg_length_secs'] !== null ? number_format((float)$bit['avg_length_secs'], 1) : '—';
+                                $avgLen  = $bit['avg_length_secs'] !== null ? (string)((int)(ceil(((float)$bit['avg_length_secs']) / 5) * 5)) : '—';
                                 $elo     = (float)$bit['current_elo'];
                                 $eloBg   = $elo >= 1100 ? 'bg-success' : ($elo >= 1000 ? 'bg-primary' : 'bg-secondary');
                             ?>
