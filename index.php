@@ -213,8 +213,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             }
 
             $n = count($bitIds);
-            if ($n < 2 || $n > 5) {
-                throw new InvalidArgumentException('Select between 2 and 5 bits per show.');
+            if ($n < 2) {
+                throw new InvalidArgumentException('Select at least 2 bits per show.');
             }
             if ($n !== count($durations) || $n !== count($scores)) {
                 throw new InvalidArgumentException('Mismatched input arrays — please reload and try again.');
@@ -940,7 +940,6 @@ const ALL_BITS = <?= json_encode(
 ) ?>;
 
 const MIN_ROWS = 2;
-const MAX_ROWS = 5;
 
 function escHtml(str) {
     return str
@@ -962,8 +961,6 @@ function buildOptions(selectedId) {
 
 function addBitRow(selectedId = 0) {
     const container = document.getElementById('bitRows');
-    const count     = container.querySelectorAll('.bit-row').length;
-    if (count >= MAX_ROWS) { alert(`Maximum ${MAX_ROWS} bits per show.`); return; }
 
     const div = document.createElement('div');
     div.className = 'row g-2 mb-2 bit-row';
