@@ -929,14 +929,19 @@ function h(mixed $v): string
                     <tbody>
                         <?php foreach ($gigGroups as $gig): ?>
                             <?php $perfCount = count($gig['perfs']); ?>
-                            <?php $perfsJson = json_encode($gig['perfs'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>
+                            <?php $perfsJson = htmlspecialchars(json_encode($gig['perfs']), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?>
                             <tr class="table-dark">
                                 <td colspan="4" class="py-2">
                                     <div class="d-flex align-items-center gap-2 flex-wrap">
                                         <button type="button"
                                                 class="btn btn-sm btn-link btn-edit p-0 text-white text-decoration-none"
                                                 title="Edit gig"
-                                                onclick='openEditGigModal(<?= (int)$gig['id'] ?>, <?= json_encode($gig['gig_date'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= json_encode($gig['gig_name'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= json_encode($gig['youtube_url'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= $perfCount ?>, <?= $perfsJson ?>)'
+                                                data-gig-id="<?= (int)$gig['id'] ?>"
+                                                data-gig-date="<?= htmlspecialchars($gig['gig_date'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"
+                                                data-gig-name="<?= htmlspecialchars($gig['gig_name'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"
+                                                data-gig-youtube="<?= htmlspecialchars($gig['youtube_url'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>"
+                                                data-gig-perfs="<?= $perfsJson ?>"
+                                                onclick="openEditGigModalFromButton(this)"
                                         >&#9999;&#65039;</button>
                                         <strong><?= h($gig['gig_date']) ?></strong>
                                         <span class="text-white-50">&mdash;</span>
@@ -1382,12 +1387,21 @@ function hideDeleteGigModal() {
     if (modalBackdrop) { modalBackdrop.remove(); modalBackdrop = null; }
 }
 
-function openEditGigModal(id, date, name, youtubeUrl, perfCount, perfsJson) {
+function openEditGigModalFromButton(button) {
+    const id       = button.getAttribute('data-gig-id');
+    const date     = button.getAttribute('data-gig-date');
+    const name     = button.getAttribute('data-gig-name');
+    const youtube  = button.getAttribute('data-gig-youtube');
+    const perfsStr = button.getAttribute('data-gig-perfs');
+
+    openEditGigModal(id, date, name, youtube, perfsStr);
+}
+
+function openEditGigModal(id, date, name, youtube, perfsStr) {
     document.getElementById('editGigId').value      = id;
     document.getElementById('editGigDate').value    = date;
     document.getElementById('editGigName').value    = name;
-    document.getElementById('editGigYoutube').value = youtubeUrl;
-    document.getElementById('editGigPerfCount').value = String(perfCount ?? 0);
+    document.getElementById('editGigYoutube').value = youtube;
 
     // Clear existing bit rows
     const container = document.getElementById('editGigBitRows');
@@ -1396,8 +1410,9 @@ function openEditGigModal(id, date, name, youtubeUrl, perfCount, perfsJson) {
     // Populate from existing performances
     let perfs = [];
     try {
-        if (perfsJson) {
-            perfs = JSON.parse(perfsJson);
+        if (perfsStr) {
+            perfs = JSON.parse(perfsStr);
+            console.log('Parsed performances:', perfs);
         }
     } catch (e) {
         console.error('Failed to parse performances JSON:', e);
@@ -1410,6 +1425,7 @@ function openEditGigModal(id, date, name, youtubeUrl, perfCount, perfsJson) {
     } else {
         // Add a row for each existing performance
         for (const p of perfs) {
+            console.log('Adding row for:', p);
             addEditGigBitRow(Number(p.bit_id), Number(p.duration_mins), Number(p.total_p_line_score));
         }
     }
