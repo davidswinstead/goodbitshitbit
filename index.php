@@ -53,6 +53,117 @@ function eloExpected(float $myRating, float $oppRating): float
     return 1.0 / (1.0 + 10 ** (($oppRating - $myRating) / 400.0));
 }
 
+// ── Full rating recalculation from scratch ──────────────────────────────────
+//
+//  Resets all bits to baseline Elo, then replays all gigs in chronological order
+//  to recompute final ratings deterministically. Called after any gig add/edit.
+
+function recalculateAllRatings(): void
+{
+    // Reset all bits to baseline
+    db()->exec('UPDATE bits SET current_elo = ' . ELO_START . ', times_performed = 0');
+
+    // Fetch all gigs in strict chronological order
+    $gigs = db()->query(
+        'SELECT id, gig_date FROM gigs ORDER BY gig_date ASC, id ASC'
+    )->fetchAll(PDO::FETCH_ASSOC);
+
+    // Batch-fetch all performances grouped by gig
+    $gigPerfMap = [];
+    $allPerfs = db()->query(
+        'SELECT gig_id, bit_id, duration_mins, total_p_line_score, calculated_ppm
+           FROM performances
+          ORDER BY gig_id, id'
+    )->fetchAll(PDO::FETCH_ASSOC);
+    foreach ($allPerfs as $p) {
+        $gid = (int)$p['gig_id'];
+        if (!isset($gigPerfMap[$gid])) {
+            $gigPerfMap[$gid] = [];
+        }
+        $gigPerfMap[$gid][] = $p;
+    }
+
+    db()->beginTransaction();
+
+    // Replay each gig
+    foreach ($gigs as $gig) {
+        $gigId = (int)$gig['id'];
+        $perfs = $gigPerfMap[$gigId] ?? [];
+
+        if (empty($perfs)) continue;
+
+        // Fetch current Elo for all bits in this gig (pre-gig, frozen for all matchups)
+        $bits = [];
+        foreach ($perfs as $p) {
+            $bitId = (int)$p['bit_id'];
+            if (isset($bits[$bitId])) continue;
+
+            $st = db()->prepare('SELECT id, current_elo FROM bits WHERE id = :id');
+            $st->execute([':id' => $bitId]);
+            $row = $st->fetch(PDO::FETCH_ASSOC);
+            if (!$row) continue;
+
+            $bits[$bitId] = [
+                'id'        => $bitId,
+                'pre_elo'   => (float)$row['current_elo'],
+                'elo_delta' => 0.0,
+            ];
+        }
+
+        // Round-robin Elo across all pairs in this gig
+        $bitIds = array_keys($bits);
+        $n = count($bitIds);
+
+        for ($i = 0; $i < $n; $i++) {
+            for ($j = $i + 1; $j < $n; $j++) {
+                $idA = $bitIds[$i];
+                $idB = $bitIds[$j];
+
+                $rA = $bits[$idA]['pre_elo'];
+                $rB = $bits[$idB]['pre_elo'];
+
+                $expA = eloExpected($rA, $rB);
+                $expB = 1.0 - $expA;
+
+                // Determine winner by PPS
+                $ppmA = null;
+                $ppmB = null;
+                foreach ($perfs as $p) {
+                    if ((int)$p['bit_id'] === $idA) $ppmA = (float)$p['calculated_ppm'];
+                    if ((int)$p['bit_id'] === $idB) $ppmB = (float)$p['calculated_ppm'];
+                }
+
+                if ($ppmA === null || $ppmB === null) continue;
+
+                if ($ppmA > $ppmB) {
+                    $sA = 1.0;  $sB = 0.0;
+                } elseif ($ppmA < $ppmB) {
+                    $sA = 0.0;  $sB = 1.0;
+                } else {
+                    $sA = 0.5;  $sB = 0.5;
+                }
+
+                $dA = ELO_K * ($sA - $expA);
+                $dB = ELO_K * ($sB - $expB);
+
+                $bits[$idA]['elo_delta'] += $dA;
+                $bits[$idB]['elo_delta'] += $dB;
+            }
+        }
+
+        // Apply all deltas and update times_performed for this gig's bits
+        foreach ($bits as $bit) {
+            $newElo = round($bit['pre_elo'] + $bit['elo_delta'], 1);
+            $st = db()->prepare(
+                'UPDATE bits SET current_elo = :elo, times_performed = times_performed + 1 WHERE id = :id'
+            );
+            $st->execute([':elo' => $newElo, ':id' => $bit['id']]);
+        }
+    }
+
+    db()->commit();
+}
+
 // ── Request handling ─────────────────────────────────────────────────────────
 
 $flash        = [];   // ['type' => 'success|danger', 'html' => '...']
@@ -130,12 +241,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
     }
 
-    // ── Edit a gig ────────────────────────────────────────────────────────────
+// ── Edit a gig (with performance data) ───────────────────────────────────
     if ($action === 'edit_gig') {
         $id      = (int)($_POST['gig_id']      ?? 0);
         $gigDate = trim($_POST['gig_date']     ?? '');
         $gigName = trim($_POST['gig_name']     ?? '');
         $gigYt   = trim($_POST['gig_youtube']  ?? '');
+        $bitIds    = $_POST['bit_id']    ?? [];
+        $durations = $_POST['duration']  ?? [];
+        $scores    = $_POST['score']     ?? [];
+
         if ($id <= 0) {
             $flash = ['type' => 'danger', 'html' => 'Invalid gig ID.'];
         } elseif (!preg_match('/^\d{4}-\d{2}-\d{2}$/', $gigDate)
@@ -149,12 +264,79 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $flash = ['type' => 'danger', 'html' => 'YouTube URL must start with https://.'];
         } else {
             try {
+                $n = count($bitIds);
+                if ($n < 2) {
+                    throw new InvalidArgumentException('Select at least 2 bits per show.');
+                }
+                if ($n !== count($durations) || $n !== count($scores)) {
+                    throw new InvalidArgumentException('Mismatched input arrays — please reload and try again.');
+                }
+
+                // Validate each bit row
+                $seenIds = [];
+                $perfData = [];
+                for ($i = 0; $i < $n; $i++) {
+                    $bid   = (int)($bitIds[$i] ?? 0);
+                    $dur   = (float)($durations[$i] ?? 0);
+                    $score = (float)($scores[$i] ?? 0);
+
+                    if ($bid <= 0) {
+                        throw new InvalidArgumentException("Row " . ($i + 1) . ": no bit selected.");
+                    }
+                    if (in_array($bid, $seenIds, true)) {
+                        throw new InvalidArgumentException("Duplicate bit on row " . ($i + 1) . ".");
+                    }
+                    if ($dur <= 0) {
+                        throw new InvalidArgumentException("Row " . ($i + 1) . ": duration must be > 0.");
+                    }
+                    if ($score < 0) {
+                        throw new InvalidArgumentException("Row " . ($i + 1) . ": score cannot be negative.");
+                    }
+
+                    $seenIds[] = $bid;
+                    $ppm = $dur > 0 ? round($score / $dur, 4) : 0.0;
+                    $perfData[] = [
+                        'bit_id' => $bid,
+                        'duration' => $dur,
+                        'score' => $score,
+                        'ppm' => $ppm,
+                    ];
+                }
+
+                db()->beginTransaction();
+
+                // Update gig metadata
                 $st = db()->prepare(
                     'UPDATE gigs SET gig_date = :d, name = :n, youtube_url = :y WHERE id = :id'
                 );
                 $st->execute([':d' => $gigDate, ':n' => $gigName, ':y' => $gigYt, ':id' => $id]);
-                $flash = ['type' => 'success', 'html' => 'Gig updated.'];
+
+                // Delete and re-insert performances for this gig
+                $st = db()->prepare('DELETE FROM performances WHERE gig_id = :gid');
+                $st->execute([':gid' => $id]);
+
+                $stInsert = db()->prepare(
+                    'INSERT INTO performances (bit_id, gig_id, duration_mins, total_p_line_score, calculated_ppm)
+                     VALUES (:bid, :gid, :dur, :sc, :ppm)'
+                );
+                foreach ($perfData as $p) {
+                    $stInsert->execute([
+                        ':bid' => $p['bit_id'],
+                        ':gid' => $id,
+                        ':dur' => $p['duration'],
+                        ':sc' => $p['score'],
+                        ':ppm' => $p['ppm'],
+                    ]);
+                }
+
+                db()->commit();
+
+                // Recalculate all ratings from scratch
+                recalculateAllRatings();
+
+                $flash = ['type' => 'success', 'html' => 'Gig updated and all ratings recalculated.'];
             } catch (Exception $e) {
+                try { db()->rollBack(); } catch (Exception) {}
                 $flash = ['type' => 'danger', 'html' => htmlspecialchars($e->getMessage())];
             }
         }
@@ -264,70 +446,21 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ];
             }
 
-            // ── Round-robin Elo calculation (simultaneous-update method) ─────
-            //
-            //  We iterate every unique pair. We read ONLY pre_elo (frozen before
-            //  the loop). Each pair contributes to elo_delta of both participants.
-            //  After all pairs are computed, we apply the total delta in one pass.
+            // Note: Round-robin Elo computation is now deferred to recalculateAllRatings()
+            // which processes this gig along with all others in chronological order.
 
-            for ($i = 0; $i < $n; $i++) {
-                for ($j = $i + 1; $j < $n; $j++) {
-                    $rA = $bits[$i]['pre_elo'];
-                    $rB = $bits[$j]['pre_elo'];
-
-                    $expA = eloExpected($rA, $rB);
-                    $expB = 1.0 - $expA; // symmetric — saves a pow() call
-
-                    if ($bits[$i]['ppm'] > $bits[$j]['ppm']) {
-                        $sA = 1.0;  $sB = 0.0;  $winner = $bits[$i]['name'];
-                    } elseif ($bits[$i]['ppm'] < $bits[$j]['ppm']) {
-                        $sA = 0.0;  $sB = 1.0;  $winner = $bits[$j]['name'];
-                    } else {
-                        $sA = 0.5;  $sB = 0.5;  $winner = 'Tie';
-                    }
-
-                    $dA = ELO_K * ($sA - $expA);
-                    $dB = ELO_K * ($sB - $expB);
-
-                    $bits[$i]['elo_delta'] += $dA;
-                    $bits[$j]['elo_delta'] += $dB;
-
-                    $matchSummary[] = [
-                        'nameA'   => $bits[$i]['name'],
-                        'nameB'   => $bits[$j]['name'],
-                        'ppmA'    => $bits[$i]['ppm'],
-                        'ppmB'    => $bits[$j]['ppm'],
-                        'winner'  => $winner,
-                        'deltaA'  => $dA,
-                        'deltaB'  => $dB,
-                    ];
-                }
-            }
-
-            // ── Apply all deltas atomically ──────────────────────────────────
+            // ── Create gig and performances, then recalculate all ratings ────────
             db()->beginTransaction();
 
-            // Create the gig record first, then link all performances to it
+            // Create the gig record
             $st = db()->prepare(
                 'INSERT INTO gigs (gig_date, name, youtube_url) VALUES (:d, :n, :y)'
             );
             $st->execute([':d' => $showDate, ':n' => $gigName, ':y' => $gigYt]);
             $gigId = (int)db()->lastInsertId();
 
-            foreach ($bits as &$bit) {
-                $bit['new_elo'] = round($bit['pre_elo'] + $bit['elo_delta'], 1);
-
-                $st = db()->prepare(
-                    'UPDATE bits
-                        SET current_elo     = :elo,
-                            times_performed = times_performed + 1
-                      WHERE id = :id'
-                );
-                $st->execute([
-                    ':elo' => $bit['new_elo'],
-                    ':id'  => $bit['id'],
-                ]);
-
+            // Insert performances for this gig
+            foreach ($bits as $bit) {
                 $st = db()->prepare(
                     'INSERT INTO performances
                          (bit_id, gig_id, duration_mins, total_p_line_score, calculated_ppm)
@@ -341,13 +474,46 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     ':ppm' => $bit['ppm'],
                 ]);
             }
-            unset($bit); // break reference
+
+            // Build match summary for display (before recalc changes ratings)
+            $matchSummary = [];
+            for ($i = 0; $i < $n; $i++) {
+                for ($j = $i + 1; $j < $n; $j++) {
+                    $rA = $bits[$i]['pre_elo'];
+                    $rB = $bits[$j]['pre_elo'];
+                    $expA = eloExpected($rA, $rB);
+                    $expB = 1.0 - $expA;
+
+                    if ($bits[$i]['ppm'] > $bits[$j]['ppm']) {
+                        $sA = 1.0;  $sB = 0.0;  $winner = $bits[$i]['name'];
+                    } elseif ($bits[$i]['ppm'] < $bits[$j]['ppm']) {
+                        $sA = 0.0;  $sB = 1.0;  $winner = $bits[$j]['name'];
+                    } else {
+                        $sA = 0.5;  $sB = 0.5;  $winner = 'Tie';
+                    }
+
+                    $dA = ELO_K * ($sA - $expA);
+                    $dB = ELO_K * ($sB - $expB);
+
+                    $matchSummary[] = [
+                        'nameA'   => $bits[$i]['name'],
+                        'nameB'   => $bits[$j]['name'],
+                        'ppmA'    => $bits[$i]['ppm'],
+                        'ppmB'    => $bits[$j]['ppm'],
+                        'winner'  => $winner,
+                        'deltaA'  => $dA,
+                        'deltaB'  => $dB,
+                    ];
+                }
+            }
 
             db()->commit();
 
+            // Recalculate all ratings from scratch (ensures correct order-independent results)
+            recalculateAllRatings();
+
             $flash = ['type' => 'success',
-                      'html' => 'Show logged! Elo ratings updated across '
-                                . count($matchSummary) . ' match-up(s).'];
+                      'html' => 'Show logged! Elo ratings recalculated.'];
 
         } catch (Exception $e) {
             try { db()->rollBack(); } catch (Exception) {}
@@ -763,13 +929,14 @@ function h(mixed $v): string
                     <tbody>
                         <?php foreach ($gigGroups as $gig): ?>
                             <?php $perfCount = count($gig['perfs']); ?>
+                            <?php $perfsJson = json_encode($gig['perfs'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT); ?>
                             <tr class="table-dark">
                                 <td colspan="4" class="py-2">
                                     <div class="d-flex align-items-center gap-2 flex-wrap">
                                         <button type="button"
                                                 class="btn btn-sm btn-link btn-edit p-0 text-white text-decoration-none"
                                                 title="Edit gig"
-                                                onclick='openEditGigModal(<?= (int)$gig['id'] ?>, <?= json_encode($gig['gig_date'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= json_encode($gig['gig_name'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= json_encode($gig['youtube_url'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= $perfCount ?>)'
+                                                onclick='openEditGigModal(<?= (int)$gig['id'] ?>, <?= json_encode($gig['gig_date'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= json_encode($gig['gig_name'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= json_encode($gig['youtube_url'], JSON_HEX_TAG|JSON_HEX_AMP|JSON_HEX_APOS|JSON_HEX_QUOT) ?>, <?= $perfCount ?>, <?= $perfsJson ?>)'
                                         >&#9999;&#65039;</button>
                                         <strong><?= h($gig['gig_date']) ?></strong>
                                         <span class="text-white-50">&mdash;</span>
@@ -867,7 +1034,7 @@ function h(mixed $v): string
                     <h5 class="modal-title" id="editGigModalLabel">&#9999;&#65039; Edit Gig</h5>
                     <button type="button" class="btn-close" id="closeEditGigModalBtn" aria-label="Close"></button>
                 </div>
-                <div class="modal-body">
+                <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
                     <div class="mb-3">
                         <label class="form-label fw-semibold" for="editGigDate">Date</label>
                         <input type="date" id="editGigDate" name="gig_date" class="form-control" required>
@@ -885,6 +1052,33 @@ function h(mixed $v): string
                         <input type="url" id="editGigYoutube" name="gig_youtube"
                                class="form-control" maxlength="500"
                                placeholder="https://youtu.be/...">
+                    </div>
+
+                    <hr>
+
+                    <div class="mb-3">
+                        <label class="fw-semibold small">Performances</label>
+                        <!-- Column headers for bit rows -->
+                        <div class="row g-2 mb-1 text-muted small">
+                            <div class="col-5">Bit</div>
+                            <div class="col-3">Duration (secs)</div>
+                            <div class="col-4">P-Line Score</div>
+                        </div>
+
+                        <div id="editGigBitRows"></div>
+
+                        <div class="d-flex gap-2 mt-2">
+                            <button type="button" class="btn btn-outline-secondary btn-sm"
+                                    onclick="addEditGigBitRow()">+ Add Bit</button>
+                            <button type="button" class="btn btn-outline-danger btn-sm"
+                                    onclick="removeEditGigBitRow()">− Remove Last</button>
+                            <span class="ms-auto text-muted small align-self-center" id="editGigRowCount"></span>
+                        </div>
+                    </div>
+
+                    <div class="alert alert-info py-2 small">
+                        <strong>PPS</strong> = Score ÷ Duration (seconds).
+                        Ratings will be recalculated when you save.
                     </div>
                 </div>
                 <div class="modal-footer d-flex justify-content-between">
@@ -1188,15 +1382,94 @@ function hideDeleteGigModal() {
     if (modalBackdrop) { modalBackdrop.remove(); modalBackdrop = null; }
 }
 
-function openEditGigModal(id, date, name, youtubeUrl, perfCount) {
+function openEditGigModal(id, date, name, youtubeUrl, perfCount, perfsJson) {
     document.getElementById('editGigId').value      = id;
     document.getElementById('editGigDate').value    = date;
     document.getElementById('editGigName').value    = name;
     document.getElementById('editGigYoutube').value = youtubeUrl;
     document.getElementById('editGigPerfCount').value = String(perfCount ?? 0);
+
+    // Clear existing bit rows
+    const container = document.getElementById('editGigBitRows');
+    container.innerHTML = '';
+
+    // Populate from existing performances
+    let perfs = [];
+    try {
+        if (perfsJson) {
+            perfs = JSON.parse(perfsJson);
+        }
+    } catch (e) {
+        console.error('Failed to parse performances JSON:', e);
+    }
+
+    if (perfs.length === 0) {
+        // No perfs, add 2 blank rows
+        addEditGigBitRow();
+        addEditGigBitRow();
+    } else {
+        // Add a row for each existing performance
+        for (const p of perfs) {
+            addEditGigBitRow(Number(p.bit_id), Number(p.duration_mins), Number(p.total_p_line_score));
+        }
+    }
+
     showEditGigModal();
     setTimeout(() => document.getElementById('editGigName').select(), 50);
 }
+
+function addEditGigBitRow(selectedBitId = 0, duration = 0, score = 0) {
+    const container = document.getElementById('editGigBitRows');
+
+    const div = document.createElement('div');
+    div.className = 'row g-2 mb-2 edit-gig-bit-row';
+    div.innerHTML = `
+        <div class="col-5">
+            <select name="bit_id[]" class="form-select" required>
+                ${buildOptions(selectedBitId)}
+            </select>
+        </div>
+        <div class="col-3">
+            <input type="number" name="duration[]" class="form-control"
+                   placeholder="e.g. 80" step="1" min="1" max="3600" value="${duration}" required>
+        </div>
+        <div class="col-4">
+            <input type="number" name="score[]" class="form-control"
+                   placeholder="e.g. 28" step="0.1" min="0" value="${score}" required>
+        </div>`;
+    container.appendChild(div);
+    updateEditGigRowCount();
+}
+
+function removeEditGigBitRow() {
+    const container = document.getElementById('editGigBitRows');
+    const rows      = container.querySelectorAll('.edit-gig-bit-row');
+    if (rows.length <= 2) { alert('Minimum 2 bits required for a comparison.'); return; }
+    rows[rows.length - 1].remove();
+    updateEditGigRowCount();
+}
+
+function updateEditGigRowCount() {
+    const n = document.getElementById('editGigBitRows').querySelectorAll('.edit-gig-bit-row').length;
+    const matches = n * (n - 1) / 2;
+    document.getElementById('editGigRowCount').textContent =
+        `${n} bits → ${matches} match-up${matches !== 1 ? 's' : ''}`;
+}
+
+// Validate no duplicate bits on edit gig submit
+document.addEventListener('DOMContentLoaded', () => {
+    const editGigForm = document.querySelector('#editGigModal form');
+    if (editGigForm) {
+        editGigForm.addEventListener('submit', function (e) {
+            const selects = [...this.querySelectorAll('select[name="bit_id[]"]')];
+            const ids     = selects.map(s => s.value).filter(v => v !== '');
+            if (new Set(ids).size !== ids.length) {
+                e.preventDefault();
+                alert('You have selected the same bit more than once. Each bit must be unique per gig.');
+            }
+        });
+    }
+});
 
 function openDeleteGigModal(id, name, perfCount) {
     document.getElementById('deleteGigId').value              = id;
