@@ -58,8 +58,10 @@ function eloExpected(float $myRating, float $oppRating): float
 //  Resets all bits to baseline Elo, then replays all gigs in chronological order
 //  to recompute final ratings deterministically. Called after any gig add/edit.
 
-function recalculateAllRatings(): void
+function recalculateAllRatings(?int $summaryGigId = null): array
 {
+    $summary = [];
+
     // Reset all bits to baseline
     db()->exec('UPDATE bits SET current_elo = ' . ELO_START . ', times_performed = 0');
 
@@ -94,17 +96,21 @@ function recalculateAllRatings(): void
 
         // Fetch current Elo for all bits in this gig (pre-gig, frozen for all matchups)
         $bits = [];
+        $perfByBitId = [];
         foreach ($perfs as $p) {
             $bitId = (int)$p['bit_id'];
             if (isset($bits[$bitId])) continue;
 
-            $st = db()->prepare('SELECT id, current_elo FROM bits WHERE id = :id');
+            $perfByBitId[$bitId] = $p;
+
+            $st = db()->prepare('SELECT id, name, current_elo FROM bits WHERE id = :id');
             $st->execute([':id' => $bitId]);
             $row = $st->fetch(PDO::FETCH_ASSOC);
             if (!$row) continue;
 
             $bits[$bitId] = [
                 'id'        => $bitId,
+                'name'      => (string)$row['name'],
                 'pre_elo'   => (float)$row['current_elo'],
                 'elo_delta' => 0.0,
             ];
@@ -148,6 +154,22 @@ function recalculateAllRatings(): void
 
                 $bits[$idA]['elo_delta'] += $dA;
                 $bits[$idB]['elo_delta'] += $dB;
+
+                if ($summaryGigId !== null && $gigId === $summaryGigId) {
+                    $ppmA = isset($perfByBitId[$idA]) ? (float)$perfByBitId[$idA]['calculated_ppm'] : 0.0;
+                    $ppmB = isset($perfByBitId[$idB]) ? (float)$perfByBitId[$idB]['calculated_ppm'] : 0.0;
+                    $winner = $sA > $sB ? $bits[$idA]['name'] : ($sA < $sB ? $bits[$idB]['name'] : 'Tie');
+
+                    $summary[] = [
+                        'nameA'  => $bits[$idA]['name'],
+                        'nameB'  => $bits[$idB]['name'],
+                        'ppmA'   => $ppmA,
+                        'ppmB'   => $ppmB,
+                        'winner' => $winner,
+                        'deltaA' => $dA,
+                        'deltaB' => $dB,
+                    ];
+                }
             }
         }
 
@@ -162,6 +184,8 @@ function recalculateAllRatings(): void
     }
 
     db()->commit();
+
+    return $summary;
 }
 
 // ── Request handling ─────────────────────────────────────────────────────────
@@ -331,8 +355,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 db()->commit();
 
-                // Recalculate all ratings from scratch
-                recalculateAllRatings();
+                // Recalculate all ratings from scratch and capture this gig's match summary
+                $matchSummary = recalculateAllRatings($id);
 
                 $flash = ['type' => 'success', 'html' => 'Gig updated and all ratings recalculated.'];
             } catch (Exception $e) {
@@ -475,42 +499,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 ]);
             }
 
-            // Build match summary for display (before recalc changes ratings)
-            $matchSummary = [];
-            for ($i = 0; $i < $n; $i++) {
-                for ($j = $i + 1; $j < $n; $j++) {
-                    $rA = $bits[$i]['pre_elo'];
-                    $rB = $bits[$j]['pre_elo'];
-                    $expA = eloExpected($rA, $rB);
-                    $expB = 1.0 - $expA;
-
-                    if ($bits[$i]['ppm'] > $bits[$j]['ppm']) {
-                        $sA = 1.0;  $sB = 0.0;  $winner = $bits[$i]['name'];
-                    } elseif ($bits[$i]['ppm'] < $bits[$j]['ppm']) {
-                        $sA = 0.0;  $sB = 1.0;  $winner = $bits[$j]['name'];
-                    } else {
-                        $sA = 0.5;  $sB = 0.5;  $winner = 'Tie';
-                    }
-
-                    $dA = ELO_K * ($sA - $expA);
-                    $dB = ELO_K * ($sB - $expB);
-
-                    $matchSummary[] = [
-                        'nameA'   => $bits[$i]['name'],
-                        'nameB'   => $bits[$j]['name'],
-                        'ppmA'    => $bits[$i]['ppm'],
-                        'ppmB'    => $bits[$j]['ppm'],
-                        'winner'  => $winner,
-                        'deltaA'  => $dA,
-                        'deltaB'  => $dB,
-                    ];
-                }
-            }
-
             db()->commit();
 
-            // Recalculate all ratings from scratch (ensures correct order-independent results)
-            recalculateAllRatings();
+            // Recalculate all ratings from scratch and capture this gig's match summary
+            $matchSummary = recalculateAllRatings($gigId);
 
             $flash = ['type' => 'success',
                       'html' => 'Show logged! Elo ratings recalculated.'];
