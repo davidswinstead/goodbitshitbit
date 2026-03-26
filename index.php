@@ -561,7 +561,7 @@ $dropdownBits = db()->query('SELECT id, name FROM bits ORDER BY name COLLATE NOC
 // Performances grouped by gig, newest date first
 $perfRows = db()->query(
     'SELECT g.id AS gig_id, g.gig_date, g.name AS gig_name, g.youtube_url,
-            p.id AS perf_id, p.duration_mins, p.total_p_line_score, p.calculated_ppm,
+            p.id AS perf_id, p.bit_id, p.duration_mins, p.total_p_line_score, p.calculated_ppm,
             b.name AS bit_name
        FROM gigs g
        JOIN performances p ON p.gig_id = g.id
