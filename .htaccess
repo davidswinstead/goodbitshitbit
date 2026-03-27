@@ -1,0 +1,42 @@
+# ── Authentication ─────────────────────────────────────────────────────────────
+#
+#  AuthUserFile is set to a placeholder below.
+#  Running `php init_db.php` will automatically replace it with the correct
+#  absolute path to .htpasswd on your server.
+#
+#  If you patch it manually, use an absolute filesystem path, e.g.:
+#     AuthUserFile /var/www/html/goodbitshitbit/.htpasswd
+
+AuthType Basic
+AuthName "Comedy Bits Tracker"
+AuthUserFile C:\xampp\htdocs\.htpasswd
+Require valid-user
+
+# ── Protect sensitive files ────────────────────────────────────────────────────
+
+# Block direct access to the SQLite database
+<Files "comedy.db">
+    Require all denied
+</Files>
+
+# Block direct access to the password file
+<Files ".htpasswd">
+    Require all denied
+</Files>
+
+# Block direct browser access to the init script once setup is done
+<Files "init_db.php">
+    Require all denied
+</Files>
+
+# ── Security headers ───────────────────────────────────────────────────────────
+
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "SAMEORIGIN"
+    Header always set Referrer-Policy "same-origin"
+</IfModule>
+
+# ── Disable directory listing ──────────────────────────────────────────────────
+
+Options -Indexes

@@ -1,0 +1,38 @@
+---
+# .cpanel.yml — cPanel Git Version Control deployment
+#
+# Configure via cPanel → Git Version Control → Manage → Pull or Deploy.
+# Push your repo to the cPanel bare repository and cPanel will run these tasks.
+#
+# Target: /home/a2bremov/davidswinstead.com/misc/goodbitshitbit/
+#
+# Safety guarantee: comedy.db is NEVER touched if it already exists.
+# First-time deploy: init_db.php is run automatically to create the database.
+# NOTE: .htaccess/.htpasswd are NOT deployed — handle auth separately on the server.
+
+deployment:
+  tasks:
+    # ── 1. Ensure directory exists ──────────────────────────────────────────
+    - /bin/mkdir -p /home/a2bremov/davidswinstead.com/misc/goodbitshitbit
+
+    # ── 2. Copy application files (comedy.db is intentionally not copied) ──
+    - /bin/cp index.php    /home/a2bremov/davidswinstead.com/misc/goodbitshitbit/index.php
+    - /bin/cp init_db.php  /home/a2bremov/davidswinstead.com/misc/goodbitshitbit/init_db.php
+    - /bin/cp convert.php  /home/a2bremov/davidswinstead.com/misc/goodbitshitbit/convert.php
+
+    # ── 3. Permissions ──────────────────────────────────────────────────────
+    # Directories: traversable by web server
+    - /bin/find /home/a2bremov/davidswinstead.com/misc/goodbitshitbit -type d -exec chmod 755 {} +
+
+    # PHP files: readable by web server, not world-writable
+    - /bin/find /home/a2bremov/davidswinstead.com/misc/goodbitshitbit -type f -name "*.php"    -exec chmod 644 {} +
+
+    # .htpasswd: owner+group read only (Apache reads it as the owner on most cPanel hosts)
+
+    # ── 4. Initialise DB on first deploy only; preserve it on all others ──
+    # If comedy.db already exists: skip entirely (data preserved).
+    # If comedy.db does not exist: run init_db.php to create tables.
+    - /bin/bash -c 'test -f /home/a2bremov/davidswinstead.com/misc/goodbitshitbit/comedy.db || php /home/a2bremov/davidswinstead.com/misc/goodbitshitbit/init_db.php'
+
+    # ── 5. Ensure DB is writable by web server (PHP needs read+write) ──────
+    - /bin/bash -c 'test -f /home/a2bremov/davidswinstead.com/misc/goodbitshitbit/comedy.db && chmod 664 /home/a2bremov/davidswinstead.com/misc/goodbitshitbit/comedy.db || true'
