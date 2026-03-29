@@ -61,6 +61,7 @@ function eloExpected(float $myRating, float $oppRating): float
 function recalculateAllRatings(?int $summaryGigId = null): array
 {
     $summary = [];
+    $summaryBitDeltas = [];
 
     // Reset all bits to baseline
     db()->exec('UPDATE bits SET current_elo = ' . ELO_START . ', times_performed = 0');
@@ -173,6 +174,27 @@ function recalculateAllRatings(?int $summaryGigId = null): array
             }
         }
 
+        if ($summaryGigId !== null && $gigId === $summaryGigId) {
+            foreach ($bits as $bit) {
+                $pre = (float)$bit['pre_elo'];
+                $change = (float)$bit['elo_delta'];
+                $post = round($pre + $change, 1);
+                $summaryBitDeltas[] = [
+                    'name'   => $bit['name'],
+                    'before' => round($pre, 1),
+                    'after'  => $post,
+                    'delta'  => $change,
+                ];
+            }
+
+            usort($summaryBitDeltas, function (array $a, array $b): int {
+                if ($a['delta'] === $b['delta']) {
+                    return strcasecmp($a['name'], $b['name']);
+                }
+                return $a['delta'] < $b['delta'] ? 1 : -1;
+            });
+        }
+
         // Apply all deltas and update times_performed for this gig's bits
         foreach ($bits as $bit) {
             $newElo = round($bit['pre_elo'] + $bit['elo_delta'], 1);
@@ -185,7 +207,10 @@ function recalculateAllRatings(?int $summaryGigId = null): array
 
     db()->commit();
 
-    return $summary;
+    return [
+        'matches'    => $summary,
+        'bit_deltas' => $summaryBitDeltas,
+    ];
 }
 
 function buildBitBattleHistory(): array
@@ -317,8 +342,9 @@ function buildBitBattleHistory(): array
 
 // ── Request handling ─────────────────────────────────────────────────────────
 
-$flash        = [];   // ['type' => 'success|danger', 'html' => '...']
-$matchSummary = [];   // filled after a successful show log
+$flash           = [];   // ['type' => 'success|danger', 'html' => '...']
+$matchSummary    = [];   // filled after a successful show log/edit
+$bitDeltaSummary = [];   // per-bit net Elo changes for the summary show
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
@@ -482,13 +508,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
                 db()->commit();
 
-                // Recalculate all ratings from scratch and capture this gig's match summary
-                $matchSummary = recalculateAllRatings($id);
+                // Recalculate all ratings from scratch and capture this gig summary
+                $summaryData = recalculateAllRatings($id);
+                $matchSummary = $summaryData['matches'] ?? [];
+                $bitDeltaSummary = $summaryData['bit_deltas'] ?? [];
 
                 $flash = ['type' => 'success', 'html' => 'Gig updated and all ratings recalculated.'];
             } catch (Exception $e) {
                 try { db()->rollBack(); } catch (Exception) {}
                 $flash = ['type' => 'danger', 'html' => htmlspecialchars($e->getMessage())];
+                $matchSummary = [];
+                $bitDeltaSummary = [];
             }
         }
     }
@@ -628,8 +658,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
             db()->commit();
 
-            // Recalculate all ratings from scratch and capture this gig's match summary
-            $matchSummary = recalculateAllRatings($gigId);
+            // Recalculate all ratings from scratch and capture this gig summary
+            $summaryData = recalculateAllRatings($gigId);
+            $matchSummary = $summaryData['matches'] ?? [];
+            $bitDeltaSummary = $summaryData['bit_deltas'] ?? [];
 
             $flash = ['type' => 'success',
                       'html' => 'Show logged! Elo ratings recalculated.'];
@@ -638,6 +670,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             try { db()->rollBack(); } catch (Exception) {}
             $flash        = ['type' => 'danger',    'html' => htmlspecialchars($e->getMessage())];
             $matchSummary = [];
+            $bitDeltaSummary = [];
         }
     }
 }
@@ -816,6 +849,34 @@ function h(mixed $v): string
                         <?php endforeach; ?>
                     </tbody>
                 </table>
+
+                <?php if (!empty($bitDeltaSummary)): ?>
+                    <div class="border-top p-3 bg-light-subtle">
+                        <div class="fw-semibold mb-2">Overall Elo Change By Bit</div>
+                        <table class="table table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Bit</th>
+                                    <th class="text-end">Before</th>
+                                    <th class="text-end">After</th>
+                                    <th class="text-end">Net Δ</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <?php foreach ($bitDeltaSummary as $d): ?>
+                                    <tr>
+                                        <td><?= h($d['name']) ?></td>
+                                        <td class="text-end"><?= number_format((float)$d['before'], 1) ?></td>
+                                        <td class="text-end"><?= number_format((float)$d['after'], 1) ?></td>
+                                        <td class="text-end <?= (float)$d['delta'] >= 0 ? 'delta-pos' : 'delta-neg' ?>">
+                                            <?= ((float)$d['delta'] >= 0 ? '+' : '') . number_format((float)$d['delta'], 1) ?>
+                                        </td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                <?php endif; ?>
             </div>
         </div>
     <?php endif; ?>
