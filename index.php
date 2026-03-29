@@ -340,6 +340,128 @@ function buildBitBattleHistory(): array
     return $history;
 }
 
+// ── Build match summaries for every gig (read-only timeline replay) ───────────
+//  Returns array keyed by gig_id containing matches + per-bit Elo deltas.
+//  Used to power the per-gig battle summary modal.
+
+function buildAllGigSummaries(): array
+{
+    $summaries = [];
+
+    $bitRows = db()->query('SELECT id, name FROM bits')->fetchAll(PDO::FETCH_ASSOC);
+    $ratings  = [];
+    $bitNames = [];
+    foreach ($bitRows as $br) {
+        $bid = (int)$br['id'];
+        $ratings[$bid]  = (float)ELO_START;
+        $bitNames[$bid] = (string)$br['name'];
+    }
+
+    $gigs = db()->query(
+        'SELECT id, gig_date, name FROM gigs ORDER BY gig_date ASC, id ASC'
+    )->fetchAll(PDO::FETCH_ASSOC);
+
+    $allPerfs = db()->query(
+        'SELECT gig_id, bit_id, calculated_ppm FROM performances ORDER BY gig_id, id'
+    )->fetchAll(PDO::FETCH_ASSOC);
+
+    $perfByGig = [];
+    foreach ($allPerfs as $p) {
+        $gid = (int)$p['gig_id'];
+        $perfByGig[$gid][] = $p;
+    }
+
+    foreach ($gigs as $gig) {
+        $gigId = (int)$gig['id'];
+        $perfs = $perfByGig[$gigId] ?? [];
+        if (count($perfs) < 2) continue;
+
+        $bits = [];
+        foreach ($perfs as $p) {
+            $bid = (int)$p['bit_id'];
+            if (isset($bits[$bid])) continue;
+            $bits[$bid] = [
+                'id'        => $bid,
+                'name'      => $bitNames[$bid] ?? "Bit $bid",
+                'ppm'       => (float)$p['calculated_ppm'],
+                'pre_elo'   => $ratings[$bid] ?? (float)ELO_START,
+                'elo_delta' => 0.0,
+            ];
+        }
+
+        $bitKeys = array_keys($bits);
+        $n = count($bitKeys);
+        $matches = [];
+
+        for ($i = 0; $i < $n; $i++) {
+            for ($j = $i + 1; $j < $n; $j++) {
+                $idA = $bitKeys[$i];
+                $idB = $bitKeys[$j];
+
+                $rA = $bits[$idA]['pre_elo'];
+                $rB = $bits[$idB]['pre_elo'];
+                $expA = eloExpected($rA, $rB);
+                $expB = 1.0 - $expA;
+
+                $ppmA = $bits[$idA]['ppm'];
+                $ppmB = $bits[$idB]['ppm'];
+
+                if ($ppmA > $ppmB) {
+                    $sA = 1.0; $sB = 0.0; $winner = $bits[$idA]['name'];
+                } elseif ($ppmA < $ppmB) {
+                    $sA = 0.0; $sB = 1.0; $winner = $bits[$idB]['name'];
+                } else {
+                    $sA = 0.5; $sB = 0.5; $winner = 'Tie';
+                }
+
+                $dA = ELO_K * ($sA - $expA);
+                $dB = ELO_K * ($sB - $expB);
+
+                $bits[$idA]['elo_delta'] += $dA;
+                $bits[$idB]['elo_delta'] += $dB;
+
+                $matches[] = [
+                    'nameA'  => $bits[$idA]['name'],
+                    'nameB'  => $bits[$idB]['name'],
+                    'ppmA'   => $ppmA,
+                    'ppmB'   => $ppmB,
+                    'winner' => $winner,
+                    'deltaA' => $dA,
+                    'deltaB' => $dB,
+                ];
+            }
+        }
+
+        $bitDeltas = [];
+        foreach ($bits as $bit) {
+            $pre    = $bit['pre_elo'];
+            $change = $bit['elo_delta'];
+            $post   = round($pre + $change, 1);
+            $bitDeltas[] = [
+                'name'   => $bit['name'],
+                'before' => round($pre, 1),
+                'after'  => $post,
+                'delta'  => $change,
+            ];
+            $ratings[$bit['id']] = $post;
+        }
+
+        usort($bitDeltas, function (array $a, array $b): int {
+            if ($a['delta'] === $b['delta']) return strcasecmp($a['name'], $b['name']);
+            return $a['delta'] < $b['delta'] ? 1 : -1;
+        });
+
+        $summaries[$gigId] = [
+            'date'       => (string)$gig['gig_date'],
+            'name'       => (string)$gig['name'],
+            'matches'    => $matches,
+            'bit_deltas' => $bitDeltas,
+        ];
+    }
+
+    return $summaries;
+}
+
 // ── Request handling ─────────────────────────────────────────────────────────
 
 $flash           = [];   // ['type' => 'success|danger', 'html' => '...']
@@ -737,6 +859,7 @@ foreach ($perfRows as $row) {
 }
 
 $bitBattleHistory = buildBitBattleHistory();
+$allGigSummaries  = buildAllGigSummaries();
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -1141,6 +1264,12 @@ function h(mixed $v): string
                                                 data-gig-perfs="<?= $perfsJson ?>"
                                                 onclick="openEditGigModalFromButton(this)"
                                         >&#9999;&#65039;</button>
+                                        <button type="button"
+                                                class="btn btn-sm btn-link btn-chart p-0 text-white text-decoration-none"
+                                                title="Battle summary"
+                                                data-gig-id="<?= (int)$gig['id'] ?>"
+                                                onclick="openGigSummaryModal(this)"
+                                        >&#128202;</button>
                                         <strong><?= h($gig['gig_date']) ?></strong>
                                         <span class="text-white-50">&mdash;</span>
                                         <span><?= h($gig['gig_name']) ?></span>
@@ -1326,6 +1455,24 @@ function h(mixed $v): string
     </div>
 </div>
 
+<!-- ── Gig Summary Modal ────────────────────────────────────────────────────── -->
+<div class="modal fade" id="gigSummaryModal" tabindex="-1" aria-labelledby="gigSummaryModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-xl modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="gigSummaryModalLabel">&#128202; Gig Battle Summary</h5>
+                <button type="button" class="btn-close" id="closeGigSummaryModalBtn" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-0" id="gigSummaryBody">
+                <p class="text-center text-muted py-4 mb-0">Loading&hellip;</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" id="cancelGigSummaryBtn">Close</button>
+            </div>
+        </div>
+    </div>
+</div>
+
 <!-- ── Bit Battles Modal ───────────────────────────────────────────────────── -->
 <div class="modal fade" id="bitBattlesModal" tabindex="-1" aria-labelledby="bitBattlesModalLabel" aria-hidden="true">
     <div class="modal-dialog modal-xl modal-dialog-scrollable">
@@ -1370,6 +1517,11 @@ const ALL_BITS = <?= json_encode(
 
 const BIT_BATTLE_HISTORY = <?= json_encode(
     $bitBattleHistory,
+    JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
+) ?>;
+
+const GIG_SUMMARIES = <?= json_encode(
+    $allGigSummaries,
     JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
 ) ?>;
 
@@ -1567,10 +1719,12 @@ document.addEventListener('keydown', (e) => {
 
 const editGigModalEl   = document.getElementById('editGigModal');
 const deleteGigModalEl = document.getElementById('deleteGigModal');
-const bitBattlesModalEl = document.getElementById('bitBattlesModal');
+const bitBattlesModalEl  = document.getElementById('bitBattlesModal');
+const gigSummaryModalEl  = document.getElementById('gigSummaryModal');
 let bsEditGigModal    = null;
 let bsDeleteGigModal  = null;
 let bsBitBattlesModal = null;
+let bsGigSummaryModal = null;
 
 function showEditGigModal() {
     if (window.bootstrap && typeof window.bootstrap.Modal === 'function') {
@@ -1648,6 +1802,113 @@ function hideBitBattlesModal() {
     bitBattlesModalEl.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('modal-open');
     if (modalBackdrop) { modalBackdrop.remove(); modalBackdrop = null; }
+}
+
+function showGigSummaryModal() {
+    if (window.bootstrap && typeof window.bootstrap.Modal === 'function') {
+        if (!bsGigSummaryModal) bsGigSummaryModal = new window.bootstrap.Modal(gigSummaryModalEl);
+        bsGigSummaryModal.show();
+        return;
+    }
+    gigSummaryModalEl.style.display = 'block';
+    gigSummaryModalEl.classList.add('show');
+    gigSummaryModalEl.removeAttribute('aria-hidden');
+    document.body.classList.add('modal-open');
+    if (!modalBackdrop) {
+        modalBackdrop = document.createElement('div');
+        modalBackdrop.className = 'modal-backdrop fade show';
+        document.body.appendChild(modalBackdrop);
+    }
+}
+
+function hideGigSummaryModal() {
+    if (bsGigSummaryModal) { bsGigSummaryModal.hide(); return; }
+    gigSummaryModalEl.classList.remove('show');
+    gigSummaryModalEl.style.display = 'none';
+    gigSummaryModalEl.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('modal-open');
+    if (modalBackdrop) { modalBackdrop.remove(); modalBackdrop = null; }
+}
+
+function openGigSummaryModal(button) {
+    const gigId  = String(button.getAttribute('data-gig-id'));
+    const data   = GIG_SUMMARIES[gigId];
+    const bodyEl = document.getElementById('gigSummaryBody');
+    const titleEl = document.getElementById('gigSummaryModalLabel');
+
+    if (!data) {
+        bodyEl.innerHTML = '<p class="text-center text-muted py-4 mb-0">No summary data available for this gig.</p>';
+        showGigSummaryModal();
+        return;
+    }
+
+    titleEl.textContent = `\u{1F4CA} ${data.date}  \u2014  ${data.name}`;
+
+    // Build matches table
+    let matchHtml = '';
+    for (const m of data.matches) {
+        const clA = m.winner === m.nameA ? 'match-win' : (m.winner === 'Tie' ? 'match-tie' : 'match-loss');
+        const clB = m.winner === m.nameB ? 'match-win' : (m.winner === 'Tie' ? 'match-tie' : 'match-loss');
+        const dA  = formatDelta(m.deltaA);
+        const dB  = formatDelta(m.deltaB);
+        matchHtml += `
+            <tr>
+                <td class="${clA}">${escHtml(m.nameA)}</td>
+                <td class="text-end ${clA}">${Number(m.ppmA).toFixed(2)}</td>
+                <td class="text-center text-muted">vs</td>
+                <td class="${clB}">${escHtml(m.nameB)}</td>
+                <td class="text-end ${clB}">${Number(m.ppmB).toFixed(2)}</td>
+                <td><strong>${escHtml(m.winner)}</strong></td>
+                <td class="text-end ${Number(m.deltaA) >= 0 ? 'delta-pos' : 'delta-neg'}">${dA}</td>
+                <td class="text-end ${Number(m.deltaB) >= 0 ? 'delta-pos' : 'delta-neg'}">${dB}</td>
+            </tr>`;
+    }
+
+    // Build bit deltas table
+    let deltaHtml = '';
+    for (const d of data.bit_deltas) {
+        const cl = Number(d.delta) >= 0 ? 'delta-pos' : 'delta-neg';
+        deltaHtml += `
+            <tr>
+                <td>${escHtml(d.name)}</td>
+                <td class="text-end">${Number(d.before).toFixed(1)}</td>
+                <td class="text-end">${Number(d.after).toFixed(1)}</td>
+                <td class="text-end ${cl}">${formatDelta(d.delta)}</td>
+            </tr>`;
+    }
+
+    bodyEl.innerHTML = `
+        <table class="table table-sm table-striped mb-0">
+            <thead class="table-light">
+                <tr>
+                    <th>Bit A</th>
+                    <th class="text-end">PPS A</th>
+                    <th class="text-center">vs</th>
+                    <th>Bit B</th>
+                    <th class="text-end">PPS B</th>
+                    <th>Winner</th>
+                    <th class="text-end">&Delta;A</th>
+                    <th class="text-end">&Delta;B</th>
+                </tr>
+            </thead>
+            <tbody>${matchHtml}</tbody>
+        </table>
+        <div class="border-top p-3">
+            <div class="fw-semibold mb-2">Overall Elo Change By Bit</div>
+            <table class="table table-sm mb-0">
+                <thead>
+                    <tr>
+                        <th>Bit</th>
+                        <th class="text-end">Before</th>
+                        <th class="text-end">After</th>
+                        <th class="text-end">Net &Delta;</th>
+                    </tr>
+                </thead>
+                <tbody>${deltaHtml}</tbody>
+            </table>
+        </div>`;
+
+    showGigSummaryModal();
 }
 
 function formatDelta(v) {
@@ -1834,6 +2095,8 @@ document.getElementById('cancelDeleteGigBtn').addEventListener('click',    hideD
 document.getElementById('closeDeleteGigModalBtn').addEventListener('click', hideDeleteGigModal);
 document.getElementById('cancelBitBattlesBtn').addEventListener('click', hideBitBattlesModal);
 document.getElementById('closeBitBattlesModalBtn').addEventListener('click', hideBitBattlesModal);
+document.getElementById('cancelGigSummaryBtn').addEventListener('click', hideGigSummaryModal);
+document.getElementById('closeGigSummaryModalBtn').addEventListener('click', hideGigSummaryModal);
 document.getElementById('openDeleteGigFromEditBtn').addEventListener('click', () => {
     const id = Number(document.getElementById('editGigId').value || 0);
     const name = document.getElementById('editGigName').value || '(unnamed)';
