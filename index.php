@@ -1154,7 +1154,7 @@ function h(mixed $v): string
     </div>
 
     <!-- ── Two-column forms ── -->
-    <div class="row g-4">
+    <div class="row g-4 mx-0">
 
         <!-- Add Bit -->
         <div class="col-lg-4">
@@ -1208,7 +1208,7 @@ function h(mixed $v): string
 
                         <!-- Column headers for bit rows -->
                         <div class="px-1">
-                            <div class="row g-2 mb-1 text-muted small">
+                            <div class="row g-2 mx-0 mb-1 text-muted small">
                                 <div class="col-5">Bit</div>
                                 <div class="col-3">Duration (secs)</div>
                                 <div class="col-4">P-Line Score</div>
@@ -1401,7 +1401,7 @@ function h(mixed $v): string
                         <label class="fw-semibold small">Performances</label>
                         <!-- Column headers for bit rows -->
                         <div class="px-1">
-                            <div class="row g-2 mb-1 text-muted small">
+                            <div class="row g-2 mx-0 mb-1 text-muted small">
                                 <div class="col-5">Bit</div>
                                 <div class="col-3">Duration (secs)</div>
                                 <div class="col-4">P-Line Score</div>
@@ -1560,7 +1560,7 @@ function addBitRow(selectedId = 0) {
     const container = document.getElementById('bitRows');
 
     const div = document.createElement('div');
-    div.className = 'row g-2 mb-2 bit-row';
+    div.className = 'row g-2 mx-0 mb-2 bit-row';
     div.innerHTML = `
         <div class="col-5">
             <select name="bit_id[]" class="form-select" required>
@@ -2046,7 +2046,7 @@ function addEditGigBitRow(selectedBitId = 0, duration = 0, score = 0) {
     const container = document.getElementById('editGigBitRows');
 
     const div = document.createElement('div');
-    div.className = 'row g-2 mb-2 edit-gig-bit-row';
+    div.className = 'row g-2 mx-0 mb-2 edit-gig-bit-row';
     div.innerHTML = `
         <div class="col-5">
             <select name="bit_id[]" class="form-select" required>
