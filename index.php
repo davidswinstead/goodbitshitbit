@@ -905,6 +905,8 @@ function h(mixed $v): string
         .btn-edit:hover { opacity: 1; }
         .btn-chart  { opacity: .55; transition: opacity .15s; line-height: 1; text-decoration: none !important; }
         .btn-chart:hover { opacity: 1; }
+        .page-header { flex-wrap: wrap; }
+        .collapsible-header { flex-wrap: wrap; row-gap: .25rem; }
     </style>
 </head>
 <body>
@@ -912,7 +914,7 @@ function h(mixed $v): string
 <div class="container-lg py-4">
 
     <!-- Header -->
-    <div class="d-flex align-items-center gap-3 mb-4">
+    <div class="d-flex align-items-center gap-3 mb-4 page-header">
         <span style="font-size:2rem">🎤</span>
         <div>
             <h1 class="mb-0 fw-bold">Comedy Bits Elo Tracker</h1>
@@ -935,6 +937,7 @@ function h(mixed $v): string
                 <strong>Match Results — <?= count($matchSummary) ?> match-up(s) this show</strong>
             </div>
             <div class="card-body p-0">
+                <div class="table-responsive">
                 <table class="table table-sm table-striped mb-0">
                     <thead class="table-light">
                         <tr>
@@ -973,10 +976,12 @@ function h(mixed $v): string
                         <?php endforeach; ?>
                     </tbody>
                 </table>
+                </div>
 
                 <?php if (!empty($bitDeltaSummary)): ?>
                     <div class="border-top p-3 bg-light-subtle">
                         <div class="fw-semibold mb-2">Overall Elo Change By Bit</div>
+                        <div class="table-responsive">
                         <table class="table table-sm mb-0">
                             <thead>
                                 <tr>
@@ -999,6 +1004,7 @@ function h(mixed $v): string
                                 <?php endforeach; ?>
                             </tbody>
                         </table>
+                        </div>
                     </div>
                 <?php endif; ?>
             </div>
@@ -1007,7 +1013,7 @@ function h(mixed $v): string
 
     <!-- ── Leaderboard: Tested Bits ── -->
     <div class="card mb-4 shadow-sm">
-        <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center"
+        <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center collapsible-header"
              id="testedBitsHeader" data-toggle-target="testedBitsBody" style="cursor:pointer; user-select:none;">
             <h5 class="mb-0">&#127942; Tested Bits</h5>
             <small class="text-white-50"><?= count($testedBits) ?> tested / <?= count($allBits) ?> total</small>
@@ -1078,7 +1084,7 @@ function h(mixed $v): string
 
     <!-- ── Leaderboard: Untested Bits ── -->
     <div class="card mb-4 shadow-sm">
-        <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center"
+        <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center collapsible-header"
              id="untestedBitsHeader" data-toggle-target="untestedBitsBody" style="cursor:pointer; user-select:none;">
             <h5 class="mb-0">🧪 Untested Bits</h5>
             <small class="text-white-50"><?= count($untestedBits) ?> untested</small>
@@ -1201,13 +1207,15 @@ function h(mixed $v): string
                         </div>
 
                         <!-- Column headers for bit rows -->
-                        <div class="row g-2 mb-1 text-muted small">
-                            <div class="col-5">Bit</div>
-                            <div class="col-3">Duration (secs)</div>
-                            <div class="col-4">P-Line Score</div>
-                        </div>
+                        <div class="px-1">
+                            <div class="row g-2 mb-1 text-muted small">
+                                <div class="col-5">Bit</div>
+                                <div class="col-3">Duration (secs)</div>
+                                <div class="col-4">P-Line Score</div>
+                            </div>
 
-                        <div id="bitRows"></div>
+                            <div id="bitRows"></div>
+                        </div>
 
                         <div class="d-flex gap-2 mt-2 mb-3">
                             <button type="button" class="btn btn-outline-secondary btn-sm"
@@ -1392,13 +1400,15 @@ function h(mixed $v): string
                     <div class="mb-3">
                         <label class="fw-semibold small">Performances</label>
                         <!-- Column headers for bit rows -->
-                        <div class="row g-2 mb-1 text-muted small">
-                            <div class="col-5">Bit</div>
-                            <div class="col-3">Duration (secs)</div>
-                            <div class="col-4">P-Line Score</div>
-                        </div>
+                        <div class="px-1">
+                            <div class="row g-2 mb-1 text-muted small">
+                                <div class="col-5">Bit</div>
+                                <div class="col-3">Duration (secs)</div>
+                                <div class="col-4">P-Line Score</div>
+                            </div>
 
-                        <div id="editGigBitRows"></div>
+                            <div id="editGigBitRows"></div>
+                        </div>
 
                         <div class="d-flex gap-2 mt-2">
                             <button type="button" class="btn btn-outline-secondary btn-sm"
