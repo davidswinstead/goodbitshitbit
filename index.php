@@ -905,8 +905,6 @@ function h(mixed $v): string
         .btn-edit:hover { opacity: 1; }
         .btn-chart  { opacity: .55; transition: opacity .15s; line-height: 1; text-decoration: none !important; }
         .btn-chart:hover { opacity: 1; }
-        .page-header { flex-wrap: wrap; }
-        .collapsible-header { flex-wrap: wrap; row-gap: .25rem; }
     </style>
 </head>
 <body>
@@ -914,7 +912,7 @@ function h(mixed $v): string
 <div class="container-lg py-4">
 
     <!-- Header -->
-    <div class="d-flex align-items-center gap-3 mb-4 page-header">
+    <div class="d-flex align-items-center gap-3 mb-4">
         <span style="font-size:2rem">🎤</span>
         <div>
             <h1 class="mb-0 fw-bold">Comedy Bits Elo Tracker</h1>
@@ -1013,7 +1011,7 @@ function h(mixed $v): string
 
     <!-- ── Leaderboard: Tested Bits ── -->
     <div class="card mb-4 shadow-sm">
-        <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center collapsible-header"
+        <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center"
              id="testedBitsHeader" data-toggle-target="testedBitsBody" style="cursor:pointer; user-select:none;">
             <h5 class="mb-0">&#127942; Tested Bits</h5>
             <small class="text-white-50"><?= count($testedBits) ?> tested / <?= count($allBits) ?> total</small>
@@ -1084,7 +1082,7 @@ function h(mixed $v): string
 
     <!-- ── Leaderboard: Untested Bits ── -->
     <div class="card mb-4 shadow-sm">
-        <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center collapsible-header"
+        <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center"
              id="untestedBitsHeader" data-toggle-target="untestedBitsBody" style="cursor:pointer; user-select:none;">
             <h5 class="mb-0">🧪 Untested Bits</h5>
             <small class="text-white-50"><?= count($untestedBits) ?> untested</small>
@@ -1154,7 +1152,7 @@ function h(mixed $v): string
     </div>
 
     <!-- ── Two-column forms ── -->
-    <div class="row g-4 mx-0">
+    <div class="row g-4">
 
         <!-- Add Bit -->
         <div class="col-lg-4">
@@ -1207,15 +1205,13 @@ function h(mixed $v): string
                         </div>
 
                         <!-- Column headers for bit rows -->
-                        <div class="px-1">
-                            <div class="row g-2 mx-0 mb-1 text-muted small">
-                                <div class="col-5">Bit</div>
-                                <div class="col-3">Duration (secs)</div>
-                                <div class="col-4">P-Line Score</div>
-                            </div>
-
-                            <div id="bitRows"></div>
+                        <div class="row g-2 mb-1 text-muted small">
+                            <div class="col-5">Bit</div>
+                            <div class="col-3">Duration (secs)</div>
+                            <div class="col-4">P-Line Score</div>
                         </div>
+
+                        <div id="bitRows"></div>
 
                         <div class="d-flex gap-2 mt-2 mb-3">
                             <button type="button" class="btn btn-outline-secondary btn-sm"
@@ -1400,15 +1396,13 @@ function h(mixed $v): string
                     <div class="mb-3">
                         <label class="fw-semibold small">Performances</label>
                         <!-- Column headers for bit rows -->
-                        <div class="px-1">
-                            <div class="row g-2 mx-0 mb-1 text-muted small">
-                                <div class="col-5">Bit</div>
-                                <div class="col-3">Duration (secs)</div>
-                                <div class="col-4">P-Line Score</div>
-                            </div>
-
-                            <div id="editGigBitRows"></div>
+                        <div class="row g-2 mb-1 text-muted small">
+                            <div class="col-5">Bit</div>
+                            <div class="col-3">Duration (secs)</div>
+                            <div class="col-4">P-Line Score</div>
                         </div>
+
+                        <div id="editGigBitRows"></div>
 
                         <div class="d-flex gap-2 mt-2">
                             <button type="button" class="btn btn-outline-secondary btn-sm"
@@ -1560,7 +1554,7 @@ function addBitRow(selectedId = 0) {
     const container = document.getElementById('bitRows');
 
     const div = document.createElement('div');
-    div.className = 'row g-2 mx-0 mb-2 bit-row';
+    div.className = 'row g-2 mb-2 bit-row';
     div.innerHTML = `
         <div class="col-5">
             <select name="bit_id[]" class="form-select" required>
@@ -1676,6 +1670,7 @@ function hideEditModal() {
         modalBackdrop.remove();
         modalBackdrop = null;
     }
+    clearModalBodyCompensationIfNoOpenModals();
 }
 
 function openEditModal(id, name) {
@@ -1737,6 +1732,13 @@ let bsDeleteGigModal  = null;
 let bsBitBattlesModal = null;
 let bsGigSummaryModal = null;
 
+function clearModalBodyCompensationIfNoOpenModals() {
+    if (document.querySelector('.modal.show')) return;
+    document.body.classList.remove('modal-open');
+    document.body.style.removeProperty('padding-right');
+    document.body.style.removeProperty('overflow');
+}
+
 function showEditGigModal() {
     if (window.bootstrap && typeof window.bootstrap.Modal === 'function') {
         if (!bsEditGigModal) bsEditGigModal = new window.bootstrap.Modal(editGigModalEl);
@@ -1761,6 +1763,7 @@ function hideEditGigModal() {
     editGigModalEl.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('modal-open');
     if (modalBackdrop) { modalBackdrop.remove(); modalBackdrop = null; }
+    clearModalBodyCompensationIfNoOpenModals();
 }
 
 function showDeleteGigModal() {
@@ -1787,6 +1790,7 @@ function hideDeleteGigModal() {
     deleteGigModalEl.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('modal-open');
     if (modalBackdrop) { modalBackdrop.remove(); modalBackdrop = null; }
+    clearModalBodyCompensationIfNoOpenModals();
 }
 
 function showBitBattlesModal() {
@@ -1813,6 +1817,7 @@ function hideBitBattlesModal() {
     bitBattlesModalEl.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('modal-open');
     if (modalBackdrop) { modalBackdrop.remove(); modalBackdrop = null; }
+    clearModalBodyCompensationIfNoOpenModals();
 }
 
 function showGigSummaryModal() {
@@ -1839,6 +1844,7 @@ function hideGigSummaryModal() {
     gigSummaryModalEl.setAttribute('aria-hidden', 'true');
     document.body.classList.remove('modal-open');
     if (modalBackdrop) { modalBackdrop.remove(); modalBackdrop = null; }
+    clearModalBodyCompensationIfNoOpenModals();
 }
 
 function openGigSummaryModal(button) {
@@ -2046,7 +2052,7 @@ function addEditGigBitRow(selectedBitId = 0, duration = 0, score = 0) {
     const container = document.getElementById('editGigBitRows');
 
     const div = document.createElement('div');
-    div.className = 'row g-2 mx-0 mb-2 edit-gig-bit-row';
+    div.className = 'row g-2 mb-2 edit-gig-bit-row';
     div.innerHTML = `
         <div class="col-5">
             <select name="bit_id[]" class="form-select" required>
@@ -2114,6 +2120,17 @@ document.getElementById('openDeleteGigFromEditBtn').addEventListener('click', ()
     const id = Number(document.getElementById('editGigId').value || 0);
     const name = document.getElementById('editGigName').value || '(unnamed)';
     const perfCount = Number(document.getElementById('editGigPerfCount').value || 0);
+
+    if (window.bootstrap && typeof window.bootstrap.Modal === 'function') {
+        const onHidden = () => {
+            editGigModalEl.removeEventListener('hidden.bs.modal', onHidden);
+            openDeleteGigModal(id, name, perfCount);
+        };
+        editGigModalEl.addEventListener('hidden.bs.modal', onHidden);
+        hideEditGigModal();
+        return;
+    }
+
     hideEditGigModal();
     openDeleteGigModal(id, name, perfCount);
 });
@@ -2128,6 +2145,12 @@ document.addEventListener('keydown', (e) => {
     if (deleteGigModalEl.classList.contains('show')) hideDeleteGigModal();
     if (bitBattlesModalEl.classList.contains('show')) hideBitBattlesModal();
 });
+
+[editModalEl, editGigModalEl, deleteGigModalEl, bitBattlesModalEl, gigSummaryModalEl].forEach((el) => {
+    el.addEventListener('hidden.bs.modal', clearModalBodyCompensationIfNoOpenModals);
+});
+
+document.addEventListener('DOMContentLoaded', clearModalBodyCompensationIfNoOpenModals);
 
 // Fallback for dismissible alerts when Bootstrap's Alert plugin is unavailable.
 document.addEventListener('click', (e) => {
