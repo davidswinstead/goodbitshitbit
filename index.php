@@ -658,7 +658,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $st = db()->prepare('DELETE FROM gigs WHERE id = :id');
                 $st->execute([':id' => $id]);
                 db()->commit();
-                $flash = ['type' => 'success', 'html' => 'Gig and all its performance records deleted.'];
+                recalculateAllRatings();
+                $flash = ['type' => 'success', 'html' => 'Gig deleted. Elo ratings recalculated.'];
             } catch (Exception $e) {
                 try { db()->rollBack(); } catch (Exception) {}
                 $flash = ['type' => 'danger', 'html' => htmlspecialchars($e->getMessage())];
@@ -1440,7 +1441,7 @@ function h(mixed $v): string
                     <strong>Delete &ldquo;<span id="deleteGigName"></span>&rdquo;?</strong><br>
                     This will permanently remove this gig and all
                     <strong><span id="deleteGigPerfCount"></span> performance record(s)</strong> within it.<br>
-                    <em>Elo ratings will not be recalculated.</em>
+                    <em>Elo ratings will be recalculated.</em>
                 </div>
             </div>
             <form method="POST">
@@ -2012,6 +2013,8 @@ function openEditGigModal(id, date, name, youtube, perfsStr) {
     } catch (e) {
         console.error('Failed to parse performances JSON:', e);
     }
+
+    document.getElementById('editGigPerfCount').value = perfs.length;
 
     if (perfs.length === 0) {
         // No perfs, add 2 blank rows
