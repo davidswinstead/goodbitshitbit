@@ -1254,6 +1254,11 @@ function h(mixed $v): string
                             <tr class="table-dark">
                                 <td colspan="4" class="py-2">
                                     <div class="d-flex align-items-center gap-2 flex-wrap">
+                                        <?php if ($gig['youtube_url'] !== '' && str_starts_with($gig['youtube_url'], 'https://')): ?>
+                                            <a href="<?= h($gig['youtube_url']) ?>"
+                                               target="_blank" rel="noopener noreferrer"
+                                               class="text-danger text-decoration-none" title="Watch recording">&#9654;&#65039;</a>
+                                        <?php endif; ?>
                                         <button type="button"
                                                 class="btn btn-sm btn-link btn-edit p-0 text-white text-decoration-none"
                                                 title="Edit gig"
@@ -1273,11 +1278,6 @@ function h(mixed $v): string
                                         <strong><?= h($gig['gig_date']) ?></strong>
                                         <span class="text-white-50">&mdash;</span>
                                         <span><?= h($gig['gig_name']) ?></span>
-                                        <?php if ($gig['youtube_url'] !== '' && str_starts_with($gig['youtube_url'], 'https://')): ?>
-                                            <a href="<?= h($gig['youtube_url']) ?>"
-                                               target="_blank" rel="noopener noreferrer"
-                                               class="text-danger text-decoration-none" title="Watch recording">&#9654;&#65039;</a>
-                                        <?php endif; ?>
                                         <span class="badge bg-secondary"><?= $perfCount ?> bit<?= $perfCount !== 1 ? 's' : '' ?> compared</span>
                                     </div>
                                 </td>
@@ -2114,6 +2114,22 @@ document.addEventListener('keydown', (e) => {
     if (editGigModalEl.classList.contains('show'))   hideEditGigModal();
     if (deleteGigModalEl.classList.contains('show')) hideDeleteGigModal();
     if (bitBattlesModalEl.classList.contains('show')) hideBitBattlesModal();
+});
+
+// Fallback for dismissible alerts when Bootstrap's Alert plugin is unavailable.
+document.addEventListener('click', (e) => {
+    const dismissBtn = e.target.closest('[data-bs-dismiss="alert"]');
+    if (!dismissBtn) return;
+
+    const alertEl = dismissBtn.closest('.alert');
+    if (!alertEl) return;
+
+    if (window.bootstrap && window.bootstrap.Alert) {
+        window.bootstrap.Alert.getOrCreateInstance(alertEl).close();
+        return;
+    }
+
+    alertEl.remove();
 });
 </script>
 
