@@ -887,7 +887,7 @@ function h(mixed $v): string
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Comedy Bits Elo Tracker</title>
+    <title>GoodBit/ShitBit: Comedy Bits Elo Tracker</title>
     <link rel="stylesheet"
           href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
           integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH"
@@ -915,8 +915,8 @@ function h(mixed $v): string
     <div class="d-flex align-items-center gap-3 mb-4">
         <span style="font-size:2rem">🎤</span>
         <div>
-            <h1 class="mb-0 fw-bold">Comedy Bits Elo Tracker</h1>
-            <small class="text-muted">PPM-based Elo ranking for your stand-up bits</small>
+            <h1 class="mb-0 fw-bold">GoodBit/ShitBit</h1>
+            <small class="text-muted">Elo Tracker for your stand-up bits</small>
         </div>
     </div>
 
