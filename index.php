@@ -1176,17 +1176,19 @@ function h(mixed $v): string
                     <form method="POST" id="showForm" novalidate>
                         <input type="hidden" name="action" value="log_show">
 
-                        <div class="mb-3">
-                            <label class="form-label fw-semibold">Show Date</label>
-                            <input type="date" name="show_date" class="form-control"
-                                   value="<?= h(date('Y-m-d')) ?>" required>
-                        </div>
+                        <div class="row g-3 mb-3">
+                            <div class="col-md-3">
+                                <label class="form-label fw-semibold">Show Date</label>
+                                <input type="date" name="show_date" class="form-control"
+                                       value="<?= h(date('Y-m-d')) ?>" required>
+                            </div>
 
-                        <div class="mb-3">
-                            <label class="form-label fw-semibold">Gig Name</label>
-                            <input type="text" name="gig_name" class="form-control"
-                                   placeholder="e.g. The Compass, Open Mic"
-                                   maxlength="200" required autocomplete="off">
+                            <div class="col-md-9">
+                                <label class="form-label fw-semibold">Gig Name</label>
+                                <input type="text" name="gig_name" class="form-control"
+                                       placeholder="e.g. The Compass, Open Mic"
+                                       maxlength="200" required autocomplete="off">
+                            </div>
                         </div>
 
                         <div class="mb-3">
@@ -1201,9 +1203,10 @@ function h(mixed $v): string
 
                         <!-- Column headers for bit rows -->
                         <div class="row g-2 mb-1 text-muted small">
-                            <div class="col-5">Bit</div>
+                            <div class="col-4">Bit</div>
                             <div class="col-3">Duration (secs)</div>
-                            <div class="col-4">P-Line Score</div>
+                            <div class="col-3">P-Line Score</div>
+                            <div class="col-2 text-end">PPS</div>
                         </div>
 
                         <div id="bitRows"></div>
@@ -1381,7 +1384,7 @@ function h(mixed $v): string
 
 <!-- ── Edit Gig Modal ───────────────────────────────────────────────────────── -->
 <div class="modal fade" id="editGigModal" tabindex="-1" aria-labelledby="editGigModalLabel" aria-hidden="true">
-    <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-dialog modal-xl modal-dialog-centered">
         <div class="modal-content">
             <form method="POST">
                 <input type="hidden" name="action" value="edit_gig">
@@ -1392,14 +1395,16 @@ function h(mixed $v): string
                     <button type="button" class="btn-close" id="closeEditGigModalBtn" aria-label="Close"></button>
                 </div>
                 <div class="modal-body" style="max-height: 70vh; overflow-y: auto;">
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold" for="editGigDate">Date</label>
-                        <input type="date" id="editGigDate" name="gig_date" class="form-control" required>
-                    </div>
-                    <div class="mb-3">
-                        <label class="form-label fw-semibold" for="editGigName">Gig Name</label>
-                        <input type="text" id="editGigName" name="gig_name"
-                               class="form-control" maxlength="200" required autocomplete="off">
+                    <div class="row g-3 mb-3">
+                        <div class="col-md-3">
+                            <label class="form-label fw-semibold" for="editGigDate">Date</label>
+                            <input type="date" id="editGigDate" name="gig_date" class="form-control" required>
+                        </div>
+                        <div class="col-md-9">
+                            <label class="form-label fw-semibold" for="editGigName">Gig Name</label>
+                            <input type="text" id="editGigName" name="gig_name"
+                                   class="form-control" maxlength="200" required autocomplete="off">
+                        </div>
                     </div>
                     <div class="mb-3">
                         <label class="form-label fw-semibold" for="editGigYoutube">
@@ -1417,9 +1422,10 @@ function h(mixed $v): string
                         <label class="fw-semibold small">Performances</label>
                         <!-- Column headers for bit rows -->
                         <div class="row g-2 mb-1 text-muted small">
-                            <div class="col-5">Bit</div>
+                            <div class="col-4">Bit</div>
                             <div class="col-3">Duration (secs)</div>
-                            <div class="col-4">P-Line Score</div>
+                            <div class="col-3">P-Line Score</div>
+                            <div class="col-2 text-end">PPS</div>
                         </div>
 
                         <div id="editGigBitRows"></div>
@@ -1576,7 +1582,7 @@ function addBitRow(selectedId = 0) {
     const div = document.createElement('div');
     div.className = 'row g-2 mb-2 bit-row';
     div.innerHTML = `
-        <div class="col-5">
+        <div class="col-4">
             <select name="bit_id[]" class="form-select" required>
                 ${buildOptions(selectedId)}
             </select>
@@ -1585,12 +1591,35 @@ function addBitRow(selectedId = 0) {
             <input type="number" name="duration[]" class="form-control"
                    placeholder="e.g. 80" step="1" min="1" max="3600" required>
         </div>
-        <div class="col-4">
+        <div class="col-3">
             <input type="number" name="score[]" class="form-control"
                    placeholder="e.g. 28" step="0.1" min="0" required>
+        </div>
+        <div class="col-2 d-flex align-items-center justify-content-end">
+            <span class="bit-pps text-muted fw-semibold">&mdash;</span>
         </div>`;
     container.appendChild(div);
+    updateBitRowPps(div);
     updateRowCount();
+}
+
+function updateBitRowPps(row) {
+    const durationInput = row.querySelector('input[name="duration[]"]');
+    const scoreInput = row.querySelector('input[name="score[]"]');
+    const ppsEl = row.querySelector('.bit-pps');
+    if (!durationInput || !scoreInput || !ppsEl) return;
+
+    const duration = Number(durationInput.value);
+    const score = Number(scoreInput.value);
+
+    if (duration > 0 && Number.isFinite(duration) && Number.isFinite(score)) {
+        ppsEl.textContent = (score / duration).toFixed(2);
+        ppsEl.classList.remove('text-muted');
+        return;
+    }
+
+    ppsEl.innerHTML = '&mdash;';
+    ppsEl.classList.add('text-muted');
 }
 
 function removeBitRow() {
@@ -1620,6 +1649,17 @@ function initBitTableCollapsibles() {
         });
     });
 }
+
+document.getElementById('bitRows').addEventListener('input', (e) => {
+    if (!e.target.matches('input[name="duration[]"], input[name="score[]"]')) {
+        return;
+    }
+
+    const row = e.target.closest('.bit-row');
+    if (row) {
+        updateBitRowPps(row);
+    }
+});
 
 // Validate no duplicate bits on submit
 document.getElementById('showForm').addEventListener('submit', function (e) {
@@ -2141,7 +2181,7 @@ function addEditGigBitRow(selectedBitId = 0, duration = 0, score = 0) {
     const div = document.createElement('div');
     div.className = 'row g-2 mb-2 edit-gig-bit-row';
     div.innerHTML = `
-        <div class="col-5">
+        <div class="col-4">
             <select name="bit_id[]" class="form-select" required>
                 ${buildOptions(selectedBitId)}
             </select>
@@ -2150,12 +2190,35 @@ function addEditGigBitRow(selectedBitId = 0, duration = 0, score = 0) {
             <input type="number" name="duration[]" class="form-control"
                    placeholder="e.g. 80" step="1" min="1" max="3600" value="${duration}" required>
         </div>
-        <div class="col-4">
+        <div class="col-3">
             <input type="number" name="score[]" class="form-control"
                    placeholder="e.g. 28" step="0.1" min="0" value="${score}" required>
+        </div>
+        <div class="col-2 d-flex align-items-center justify-content-end">
+            <span class="edit-gig-bit-pps text-muted fw-semibold">&mdash;</span>
         </div>`;
     container.appendChild(div);
+    updateEditGigBitRowPps(div);
     updateEditGigRowCount();
+}
+
+function updateEditGigBitRowPps(row) {
+    const durationInput = row.querySelector('input[name="duration[]"]');
+    const scoreInput = row.querySelector('input[name="score[]"]');
+    const ppsEl = row.querySelector('.edit-gig-bit-pps');
+    if (!durationInput || !scoreInput || !ppsEl) return;
+
+    const duration = Number(durationInput.value);
+    const score = Number(scoreInput.value);
+
+    if (duration > 0 && Number.isFinite(duration) && Number.isFinite(score)) {
+        ppsEl.textContent = (score / duration).toFixed(2);
+        ppsEl.classList.remove('text-muted');
+        return;
+    }
+
+    ppsEl.innerHTML = '&mdash;';
+    ppsEl.classList.add('text-muted');
 }
 
 function removeEditGigBitRow() {
@@ -2172,6 +2235,17 @@ function updateEditGigRowCount() {
     document.getElementById('editGigRowCount').textContent =
         `${n} bits → ${matches} match-up${matches !== 1 ? 's' : ''}`;
 }
+
+document.getElementById('editGigBitRows').addEventListener('input', (e) => {
+    if (!e.target.matches('input[name="duration[]"], input[name="score[]"]')) {
+        return;
+    }
+
+    const row = e.target.closest('.edit-gig-bit-row');
+    if (row) {
+        updateEditGigBitRowPps(row);
+    }
+});
 
 // Validate no duplicate bits on edit gig submit
 document.addEventListener('DOMContentLoaded', () => {
