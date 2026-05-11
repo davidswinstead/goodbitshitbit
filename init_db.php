@@ -20,6 +20,22 @@ $dbPath   = $dir . '/comedy.db';
 $htpwPath = $dir . '/.htpasswd';
 $htaPath  = $dir . '/.htaccess';
 
+function tableExists(PDO $pdo, string $table): bool
+{
+    $st = $pdo->prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :name LIMIT 1");
+    $st->execute([':name' => $table]);
+    return (bool)$st->fetchColumn();
+}
+
+function tableColumns(PDO $pdo, string $table): array
+{
+    if (!tableExists($pdo, $table)) {
+        return [];
+    }
+    $cols = $pdo->query("PRAGMA table_info($table)")->fetchAll(PDO::FETCH_ASSOC);
+    return array_column($cols, 'name');
+}
+
 // ── 1. Create / verify SQLite database via PDO ──────────────────────────────
 
 try {
@@ -30,6 +46,32 @@ try {
 
     $pdo->exec('PRAGMA journal_mode = WAL');
     $pdo->exec('PRAGMA foreign_keys = ON');
+
+    // If this DB is using the old schema, do not leave it half-upgraded.
+    // Empty legacy DBs can be rebuilt safely; populated ones must use convert.php.
+    $bitCols  = tableColumns($pdo, 'bits');
+    $perfCols = tableColumns($pdo, 'performances');
+
+    $legacyBits = in_array('last_performed_date', $bitCols, true);
+    $legacyPerf = in_array('show_date', $perfCols, true)
+        || (!empty($perfCols) && !in_array('gig_id', $perfCols, true));
+
+    if ($legacyBits || $legacyPerf) {
+        $bitCount  = tableExists($pdo, 'bits') ? (int)$pdo->query('SELECT COUNT(*) FROM bits')->fetchColumn() : 0;
+        $perfCount = tableExists($pdo, 'performances') ? (int)$pdo->query('SELECT COUNT(*) FROM performances')->fetchColumn() : 0;
+
+        if ($bitCount === 0 && $perfCount === 0) {
+            $pdo->exec('DROP TABLE IF EXISTS performances');
+            $pdo->exec('DROP TABLE IF EXISTS gigs');
+            $pdo->exec('DROP TABLE IF EXISTS bits');
+            echo "[INFO] Legacy empty schema detected. Rebuilding to latest format.\n";
+        } else {
+            exit(
+                "[FAIL] Legacy database format detected in $dbPath\n"
+                . "       Run php convert.php to migrate existing data safely.\n"
+            );
+        }
+    }
 
     $pdo->exec(<<<SQL
         CREATE TABLE IF NOT EXISTS bits (

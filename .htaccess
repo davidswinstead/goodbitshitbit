@@ -9,7 +9,7 @@
 
 AuthType Basic
 AuthName "Comedy Bits Tracker"
-AuthUserFile C:\xampp\htdocs\.htpasswd
+AuthUserFile /var/www/html/goodbitshitbit/.htpasswd
 Require valid-user
 
 # ── Protect sensitive files ────────────────────────────────────────────────────
