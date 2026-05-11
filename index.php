@@ -911,11 +911,13 @@ function h(mixed $v): string
 
 <div class="container-lg py-4">
 
+<?php $homeUrl = rtrim(dirname($_SERVER['SCRIPT_NAME'] ?? '/'), '/') . '/'; ?>
+
     <!-- Header -->
     <div class="d-flex align-items-center gap-3 mb-4">
         <span style="font-size:2rem">🎤</span>
         <div>
-            <h1 class="mb-0 fw-bold">GoodBit/ShitBit</h1>
+            <h1 class="mb-0 fw-bold"><a href="<?= h($homeUrl) ?>" class="text-decoration-none text-reset">GoodBit/ShitBit</a></h1>
             <small class="text-muted">Elo Tracker for your stand-up bits</small>
         </div>
     </div>
@@ -1014,7 +1016,14 @@ function h(mixed $v): string
         <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center"
              id="testedBitsHeader" data-toggle-target="testedBitsBody" style="cursor:pointer; user-select:none;">
             <h5 class="mb-0">&#127942; Tested Bits</h5>
-            <small class="text-white-50"><?= count($testedBits) ?> tested / <?= count($allBits) ?> total</small>
+            <div class="d-flex align-items-center gap-3">
+                <small class="text-white-50"><?= count($testedBits) ?> tested / <?= count($allBits) ?> total</small>
+                <button type="button"
+                        class="btn btn-success btn-sm"
+                        onclick="openAddBitModal(event)">
+                    Add Bit
+                </button>
+            </div>
         </div>
         <div class="card-body p-0" id="testedBitsBody">
             <div class="table-responsive">
@@ -1085,7 +1094,14 @@ function h(mixed $v): string
         <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center"
              id="untestedBitsHeader" data-toggle-target="untestedBitsBody" style="cursor:pointer; user-select:none;">
             <h5 class="mb-0">🧪 Untested Bits</h5>
-            <small class="text-white-50"><?= count($untestedBits) ?> untested</small>
+            <div class="d-flex align-items-center gap-3">
+                <small class="text-white-50"><?= count($untestedBits) ?> untested</small>
+                <button type="button"
+                        class="btn btn-success btn-sm"
+                        onclick="openAddBitModal(event)">
+                    Add Bit
+                </button>
+            </div>
         </div>
         <div class="card-body p-0" id="untestedBitsBody">
             <div class="table-responsive">
@@ -1151,30 +1167,9 @@ function h(mixed $v): string
         </div>
     </div>
 
-    <!-- ── Two-column forms ── -->
+    <!-- Log Show -->
     <div class="row g-4">
-
-        <!-- Add Bit -->
-        <div class="col-lg-4">
-            <div class="card shadow-sm h-100">
-                <div class="card-header"><h5 class="mb-0">➕ Add New Bit</h5></div>
-                <div class="card-body">
-                    <form method="POST" novalidate>
-                        <input type="hidden" name="action" value="add_bit">
-                        <div class="mb-3">
-                            <label class="form-label fw-semibold">Bit Name</label>
-                            <input type="text" name="bit_name" class="form-control"
-                                   placeholder="e.g. The Airport Rant"
-                                   maxlength="200" required autocomplete="off">
-                        </div>
-                        <button type="submit" class="btn btn-success w-100">Add Bit</button>
-                    </form>
-                </div>
-            </div>
-        </div>
-
-        <!-- Log Show -->
-        <div class="col-lg-8">
+        <div class="col-12">
             <div class="card shadow-sm">
                 <div class="card-header"><h5 class="mb-0">📋 Log a Show</h5></div>
                 <div class="card-body">
@@ -1306,6 +1301,31 @@ function h(mixed $v): string
     <footer class="text-center text-muted small mt-4">Comedy Bits Elo Tracker &middot; PHP 8 + SQLite3</footer>
 
 </div><!-- /container -->
+
+<!-- ── Add Bit Modal ────────────────────────────────────────────────────────── -->
+<div class="modal fade" id="addBitModal" tabindex="-1" aria-labelledby="addBitModalLabel" aria-hidden="true">
+    <div class="modal-dialog modal-dialog-centered">
+        <div class="modal-content">
+            <form method="POST" id="addBitForm" novalidate>
+                <input type="hidden" name="action" value="add_bit">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="addBitModalLabel">&#10133; Add New Bit</h5>
+                    <button type="button" class="btn-close" id="closeAddBitModalBtn" aria-label="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <label class="form-label fw-semibold" for="addBitName">Bit Name</label>
+                    <input type="text" id="addBitName" name="bit_name" class="form-control"
+                           placeholder="e.g. The Airport Rant"
+                           maxlength="200" required autocomplete="off">
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" id="cancelAddBitBtn">Cancel</button>
+                    <button type="submit" class="btn btn-success">Add Bit</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
 
 <!-- ── Edit Bit Modal ───────────────────────────────────────────────────────── -->
 <div class="modal fade" id="editBitModal" tabindex="-1" aria-labelledby="editBitModalLabel" aria-hidden="true">
@@ -1621,9 +1641,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Bootstrap loads AFTER this script tag, so initialise the modal lazily
 // the first time openEditModal() is called rather than at parse time.
+let addBitModal = null;
 let editModal = null;
 let modalBackdrop = null;
 
+const addBitModalEl      = document.getElementById('addBitModal');
+const addBitForm         = document.getElementById('addBitForm');
+const addBitNameInput    = document.getElementById('addBitName');
 const editModalEl        = document.getElementById('editBitModal');
 const editBitIdInput     = document.getElementById('editBitId');
 const editBitNameInput   = document.getElementById('editBitName');
@@ -1631,6 +1655,56 @@ const deleteBitIdInput   = document.getElementById('deleteBitId');
 const deleteConfirmName  = document.getElementById('deleteConfirmName');
 const deleteConfirmPanel = document.getElementById('deleteConfirmPanel');
 const renameForm         = document.getElementById('renameForm');
+
+function showAddBitModal() {
+    if (window.bootstrap && typeof window.bootstrap.Modal === 'function') {
+        if (!addBitModal) {
+            addBitModal = new window.bootstrap.Modal(addBitModalEl);
+        }
+        addBitModal.show();
+        return;
+    }
+
+    addBitModalEl.style.display = 'block';
+    addBitModalEl.classList.add('show');
+    addBitModalEl.removeAttribute('aria-hidden');
+    document.body.classList.add('modal-open');
+
+    if (!modalBackdrop) {
+        modalBackdrop = document.createElement('div');
+        modalBackdrop.className = 'modal-backdrop fade show';
+        document.body.appendChild(modalBackdrop);
+    }
+}
+
+function hideAddBitModal() {
+    if (addBitModal) {
+        addBitModal.hide();
+        return;
+    }
+
+    addBitModalEl.classList.remove('show');
+    addBitModalEl.style.display = 'none';
+    addBitModalEl.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('modal-open');
+
+    if (modalBackdrop) {
+        modalBackdrop.remove();
+        modalBackdrop = null;
+    }
+    clearModalBodyCompensationIfNoOpenModals();
+}
+
+function openAddBitModal(event) {
+    if (event) {
+        event.preventDefault();
+        event.stopPropagation();
+    }
+
+    addBitForm.reset();
+    showAddBitModal();
+    setTimeout(() => addBitNameInput.focus(), 50);
+}
 
 function showEditModal() {
     if (window.bootstrap && typeof window.bootstrap.Modal === 'function') {
@@ -1687,6 +1761,15 @@ function openEditModal(id, name) {
     setTimeout(() => editBitNameInput.select(), 50);
 }
 
+document.getElementById('cancelAddBitBtn').addEventListener('click', hideAddBitModal);
+document.getElementById('closeAddBitModalBtn').addEventListener('click', hideAddBitModal);
+
+addBitModalEl.addEventListener('click', (e) => {
+    if (e.target === addBitModalEl) {
+        hideAddBitModal();
+    }
+});
+
 // Keep the delete confirm name in sync if the user edits the name field
 editBitNameInput.addEventListener('input', () => {
     deleteConfirmName.textContent = editBitNameInput.value || '(unnamed)';
@@ -1716,6 +1799,10 @@ editModalEl.addEventListener('click', (e) => {
 
 // Fallback Escape key support
 document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && addBitModalEl.classList.contains('show')) {
+        hideAddBitModal();
+        return;
+    }
     if (e.key === 'Escape' && editModalEl.classList.contains('show')) {
         hideEditModal();
     }
