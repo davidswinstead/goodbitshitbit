@@ -1253,9 +1253,18 @@ function h(mixed $v): string
                     <tbody>
                         <?php foreach ($gigGroups as $gig): ?>
                             <?php $perfCount = count($gig['perfs']); ?>
+                            <?php
+                                $totalDuration = 0.0;
+                                $totalScore = 0.0;
+                                foreach ($gig['perfs'] as $perf) {
+                                    $totalDuration += (float)$perf['duration_mins'];
+                                    $totalScore += (float)$perf['total_p_line_score'];
+                                }
+                                $avgPps = $totalDuration > 0 ? ($totalScore / $totalDuration) : 0.0;
+                            ?>
                             <?php $perfsJson = htmlspecialchars(json_encode($gig['perfs']), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?>
                             <tr class="table-dark">
-                                <td colspan="4" class="py-2">
+                                <td class="py-2">
                                     <div class="d-flex align-items-center gap-2 flex-wrap">
                                         <?php if ($gig['youtube_url'] !== '' && str_starts_with($gig['youtube_url'], 'https://')): ?>
                                             <a href="<?= h($gig['youtube_url']) ?>"
@@ -1284,12 +1293,15 @@ function h(mixed $v): string
                                         <span class="badge bg-secondary"><?= $perfCount ?> bit<?= $perfCount !== 1 ? 's' : '' ?> compared</span>
                                     </div>
                                 </td>
+                                <td class="text-end align-middle fw-semibold"><?= number_format($totalDuration, 0) ?></td>
+                                <td class="text-end align-middle fw-semibold"><?= number_format($totalScore, 0) ?></td>
+                                <td class="text-end align-middle fw-bold">x&#772; <?= number_format($avgPps, 2) ?></td>
                             </tr>
                             <?php foreach ($gig['perfs'] as $perf): ?>
                             <tr>
                                 <td><?= h($perf['bit_name']) ?></td>
-                                <td class="text-end"><?= number_format((float)$perf['duration_mins'], 1) ?></td>
-                                <td class="text-end"><?= number_format((float)$perf['total_p_line_score'], 1) ?></td>
+                                <td class="text-end"><?= number_format((float)$perf['duration_mins'], 0) ?></td>
+                                <td class="text-end"><?= number_format((float)$perf['total_p_line_score'], 0) ?></td>
                                 <td class="text-end fw-bold"><?= number_format((float)$perf['calculated_ppm'], 2) ?></td>
                             </tr>
                             <?php endforeach; ?>
