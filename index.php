@@ -467,6 +467,8 @@ function buildAllGigSummaries(): array
 $flash           = [];   // ['type' => 'success|danger', 'html' => '...']
 $matchSummary    = [];   // filled after a successful show log/edit
 $bitDeltaSummary = [];   // per-bit net Elo changes for the summary show
+$rankBefore      = [];   // bit_id => 1-based Elo rank before recalculation
+$rankAfter       = [];   // bit_id => 1-based Elo rank after recalculation
 
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $action = $_POST['action'] ?? '';
@@ -600,6 +602,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         'score' => $score,
                         'ppm' => $ppm,
                     ];
+                }
+
+                // Snapshot current Elo ranking before recalculation
+                foreach (db()->query(
+                    'SELECT id FROM bits WHERE times_performed > 0 ORDER BY current_elo DESC, name COLLATE NOCASE ASC'
+                )->fetchAll(PDO::FETCH_ASSOC) as $i => $r) {
+                    $rankBefore[(int)$r['id']] = $i + 1;
                 }
 
                 db()->beginTransaction();
@@ -753,6 +762,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             // Note: Round-robin Elo computation is now deferred to recalculateAllRatings()
             // which processes this gig along with all others in chronological order.
 
+            // Snapshot current Elo ranking before recalculation
+            foreach (db()->query(
+                'SELECT id FROM bits WHERE times_performed > 0 ORDER BY current_elo DESC, name COLLATE NOCASE ASC'
+            )->fetchAll(PDO::FETCH_ASSOC) as $i => $r) {
+                $rankBefore[(int)$r['id']] = $i + 1;
+            }
+
             // ── Create gig and performances, then recalculate all ratings ────────
             db()->beginTransaction();
 
@@ -830,6 +846,15 @@ $allBits = db()->query($sql)->fetchAll(PDO::FETCH_ASSOC);
 $testedBits   = array_values(array_filter($allBits, fn($b) => (int)$b['perf_count'] > 0));
 $untestedBits = array_values(array_filter($allBits, fn($b) => (int)$b['perf_count'] === 0));
 
+// Compute post-recalculation rank positions (only populated after a log/edit)
+if (!empty($rankBefore)) {
+    $eloRanked = $testedBits;
+    usort($eloRanked, fn($a, $b) => $b['current_elo'] <=> $a['current_elo'] ?: strcasecmp($a['name'], $b['name']));
+    foreach ($eloRanked as $i => $bit) {
+        $rankAfter[(int)$bit['id']] = $i + 1;
+    }
+}
+
 // Dropdown list (always alpha order for ergonomics)
 $dropdownBits = db()->query('SELECT id, name FROM bits ORDER BY name COLLATE NOCASE')->fetchAll(PDO::FETCH_ASSOC);
 
@@ -905,6 +930,7 @@ function h(mixed $v): string
         .btn-edit:hover { opacity: 1; }
         .btn-chart  { opacity: .55; transition: opacity .15s; line-height: 1; text-decoration: none !important; }
         .btn-chart:hover { opacity: 1; }
+        .row-dismissed { opacity: 0.35; }
     </style>
 </head>
 <body>
@@ -1071,7 +1097,21 @@ function h(mixed $v): string
                                         >&#128202;</button>
                                     </div>
                                 </td>
-                                <td class="fw-semibold"><?= h($bit['name']) ?></td>
+                                <td class="fw-semibold">
+                                    <?= h($bit['name']) ?>
+                                    <?php if (!empty($rankAfter)): $bid = (int)$bit['id']; ?>
+                                        <?php if (isset($rankAfter[$bid]) && !isset($rankBefore[$bid])): ?>
+                                            <span class="text-success small fw-normal ms-1">&#127381;</span>
+                                        <?php elseif (isset($rankAfter[$bid]) && isset($rankBefore[$bid])): ?>
+                                            <?php $diff = $rankBefore[$bid] - $rankAfter[$bid]; ?>
+                                            <?php if ($diff > 0): ?>
+                                                <span class="text-success small fw-normal ms-1">&#11014;&#65039; <?= $diff ?> place<?= $diff > 1 ? 's' : '' ?></span>
+                                            <?php elseif ($diff < 0): ?>
+                                                <span class="text-danger small fw-normal ms-1">&#11015;&#65039; <?= abs($diff) ?> place<?= abs($diff) > 1 ? 's' : '' ?></span>
+                                            <?php endif; ?>
+                                        <?php endif; ?>
+                                    <?php endif; ?>
+                                </td>
                                 <td>
                                     <span class="badge <?= $eloBg ?> elo-badge fs-6">
                                         <?= number_format($elo, 1) ?>
@@ -1205,8 +1245,9 @@ function h(mixed $v): string
                         <div class="row g-2 mb-1 text-muted small">
                             <div class="col-4">Bit</div>
                             <div class="col-3">Duration (secs)</div>
-                            <div class="col-3">P-Line Score</div>
+                            <div class="col-2">P-Line Score</div>
                             <div class="col-2 text-end">PPS</div>
+                            <div class="col-1"></div>
                         </div>
 
                         <div id="bitRows"></div>
@@ -1214,8 +1255,6 @@ function h(mixed $v): string
                         <div class="d-flex gap-2 mt-2 mb-3">
                             <button type="button" class="btn btn-outline-secondary btn-sm"
                                     onclick="addBitRow()">+ Add Bit</button>
-                            <button type="button" class="btn btn-outline-danger btn-sm"
-                                    onclick="removeBitRow()">− Remove Last</button>
                             <span class="ms-auto text-muted small align-self-center" id="rowCount"></span>
                         </div>
 
@@ -1253,9 +1292,18 @@ function h(mixed $v): string
                     <tbody>
                         <?php foreach ($gigGroups as $gig): ?>
                             <?php $perfCount = count($gig['perfs']); ?>
+                            <?php
+                                $totalDuration = 0.0;
+                                $totalScore = 0.0;
+                                foreach ($gig['perfs'] as $perf) {
+                                    $totalDuration += (float)$perf['duration_mins'];
+                                    $totalScore += (float)$perf['total_p_line_score'];
+                                }
+                                $avgPps = $totalDuration > 0 ? ($totalScore / $totalDuration) : 0.0;
+                            ?>
                             <?php $perfsJson = htmlspecialchars(json_encode($gig['perfs']), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8'); ?>
                             <tr class="table-dark">
-                                <td colspan="4" class="py-2">
+                                <td class="py-2">
                                     <div class="d-flex align-items-center gap-2 flex-wrap">
                                         <?php if ($gig['youtube_url'] !== '' && str_starts_with($gig['youtube_url'], 'https://')): ?>
                                             <a href="<?= h($gig['youtube_url']) ?>"
@@ -1284,12 +1332,15 @@ function h(mixed $v): string
                                         <span class="badge bg-secondary"><?= $perfCount ?> bit<?= $perfCount !== 1 ? 's' : '' ?> compared</span>
                                     </div>
                                 </td>
+                                <td class="text-end align-middle fw-semibold"><?= number_format($totalDuration, 0) ?></td>
+                                <td class="text-end align-middle fw-semibold"><?= number_format($totalScore, 0) ?></td>
+                                <td class="text-end align-middle fw-bold">x&#772; <?= number_format($avgPps, 2) ?></td>
                             </tr>
                             <?php foreach ($gig['perfs'] as $perf): ?>
                             <tr>
                                 <td><?= h($perf['bit_name']) ?></td>
-                                <td class="text-end"><?= number_format((float)$perf['duration_mins'], 1) ?></td>
-                                <td class="text-end"><?= number_format((float)$perf['total_p_line_score'], 1) ?></td>
+                                <td class="text-end"><?= number_format((float)$perf['duration_mins'], 0) ?></td>
+                                <td class="text-end"><?= number_format((float)$perf['total_p_line_score'], 0) ?></td>
                                 <td class="text-end fw-bold"><?= number_format((float)$perf['calculated_ppm'], 2) ?></td>
                             </tr>
                             <?php endforeach; ?>
@@ -1424,8 +1475,9 @@ function h(mixed $v): string
                         <div class="row g-2 mb-1 text-muted small">
                             <div class="col-4">Bit</div>
                             <div class="col-3">Duration (secs)</div>
-                            <div class="col-3">P-Line Score</div>
+                            <div class="col-2">P-Line Score</div>
                             <div class="col-2 text-end">PPS</div>
+                            <div class="col-1"></div>
                         </div>
 
                         <div id="editGigBitRows"></div>
@@ -1433,8 +1485,6 @@ function h(mixed $v): string
                         <div class="d-flex gap-2 mt-2">
                             <button type="button" class="btn btn-outline-secondary btn-sm"
                                     onclick="addEditGigBitRow()">+ Add Bit</button>
-                            <button type="button" class="btn btn-outline-danger btn-sm"
-                                    onclick="removeEditGigBitRow()">− Remove Last</button>
                             <span class="ms-auto text-muted small align-self-center" id="editGigRowCount"></span>
                         </div>
                     </div>
@@ -1591,12 +1641,16 @@ function addBitRow(selectedId = 0) {
             <input type="number" name="duration[]" class="form-control"
                    placeholder="e.g. 80" step="1" min="1" max="3600" required>
         </div>
-        <div class="col-3">
+        <div class="col-2">
             <input type="number" name="score[]" class="form-control"
                    placeholder="e.g. 28" step="0.1" min="0" required>
         </div>
         <div class="col-2 d-flex align-items-center justify-content-end">
             <span class="bit-pps text-muted fw-semibold">&mdash;</span>
+        </div>
+        <div class="col-1 d-flex align-items-center justify-content-center">
+            <button type="button" class="btn btn-outline-danger btn-sm px-1 py-0 row-dismiss-btn"
+                    title="Remove this row" onclick="toggleBitRowDisabled(this)">&#10005;</button>
         </div>`;
     container.appendChild(div);
     updateBitRowPps(div);
@@ -1622,16 +1676,39 @@ function updateBitRowPps(row) {
     ppsEl.classList.add('text-muted');
 }
 
-function removeBitRow() {
+function toggleBitRowDisabled(btn) {
+    const row = btn.closest('.bit-row');
     const container = document.getElementById('bitRows');
-    const rows      = container.querySelectorAll('.bit-row');
-    if (rows.length <= MIN_ROWS) { alert(`Minimum ${MIN_ROWS} bits required for a comparison.`); return; }
-    rows[rows.length - 1].remove();
+    const isDismissed = row.classList.contains('row-dismissed');
+
+    if (!isDismissed) {
+        const activeCount = [...container.querySelectorAll('.bit-row')].filter(r => !r.classList.contains('row-dismissed')).length;
+        if (activeCount <= MIN_ROWS) {
+            alert(`Minimum ${MIN_ROWS} bits required for a comparison.`);
+            return;
+        }
+        row.classList.add('row-dismissed');
+        row.querySelectorAll('select, input').forEach(el => { el.disabled = true; });
+        btn.innerHTML = '&#8253;';
+        btn.title = 'Restore this row';
+        btn.classList.remove('btn-outline-danger');
+        btn.classList.add('btn-outline-secondary');
+    } else {
+        row.classList.remove('row-dismissed');
+        row.querySelectorAll('select, input').forEach(el => { el.disabled = false; });
+        btn.innerHTML = '&#10005;';
+        btn.title = 'Remove this row';
+        btn.classList.remove('btn-outline-secondary');
+        btn.classList.add('btn-outline-danger');
+        updateBitRowPps(row);
+    }
+
     updateRowCount();
 }
 
 function updateRowCount() {
-    const n = document.getElementById('bitRows').querySelectorAll('.bit-row').length;
+    const rows = [...document.getElementById('bitRows').querySelectorAll('.bit-row')];
+    const n = rows.filter(r => !r.classList.contains('row-dismissed')).length;
     const matches = n * (n - 1) / 2;
     document.getElementById('rowCount').textContent =
         `${n} bits → ${matches} match-up${matches !== 1 ? 's' : ''}`;
@@ -1663,7 +1740,7 @@ document.getElementById('bitRows').addEventListener('input', (e) => {
 
 // Validate no duplicate bits on submit
 document.getElementById('showForm').addEventListener('submit', function (e) {
-    const selects = [...this.querySelectorAll('select[name="bit_id[]"]')];
+    const selects = [...this.querySelectorAll('select[name="bit_id[]"]:not(:disabled)')];
     const ids     = selects.map(s => s.value).filter(v => v !== '');
     if (new Set(ids).size !== ids.length) {
         e.preventDefault();
@@ -2190,12 +2267,16 @@ function addEditGigBitRow(selectedBitId = 0, duration = 0, score = 0) {
             <input type="number" name="duration[]" class="form-control"
                    placeholder="e.g. 80" step="1" min="1" max="3600" value="${duration}" required>
         </div>
-        <div class="col-3">
+        <div class="col-2">
             <input type="number" name="score[]" class="form-control"
                    placeholder="e.g. 28" step="0.1" min="0" value="${score}" required>
         </div>
         <div class="col-2 d-flex align-items-center justify-content-end">
             <span class="edit-gig-bit-pps text-muted fw-semibold">&mdash;</span>
+        </div>
+        <div class="col-1 d-flex align-items-center justify-content-center">
+            <button type="button" class="btn btn-outline-danger btn-sm px-1 py-0 row-dismiss-btn"
+                    title="Remove this row" onclick="toggleEditGigBitRowDisabled(this)">&#10005;</button>
         </div>`;
     container.appendChild(div);
     updateEditGigBitRowPps(div);
@@ -2221,16 +2302,39 @@ function updateEditGigBitRowPps(row) {
     ppsEl.classList.add('text-muted');
 }
 
-function removeEditGigBitRow() {
+function toggleEditGigBitRowDisabled(btn) {
+    const row = btn.closest('.edit-gig-bit-row');
     const container = document.getElementById('editGigBitRows');
-    const rows      = container.querySelectorAll('.edit-gig-bit-row');
-    if (rows.length <= 2) { alert('Minimum 2 bits required for a comparison.'); return; }
-    rows[rows.length - 1].remove();
+    const isDismissed = row.classList.contains('row-dismissed');
+
+    if (!isDismissed) {
+        const activeCount = [...container.querySelectorAll('.edit-gig-bit-row')].filter(r => !r.classList.contains('row-dismissed')).length;
+        if (activeCount <= 2) {
+            alert('Minimum 2 bits required for a comparison.');
+            return;
+        }
+        row.classList.add('row-dismissed');
+        row.querySelectorAll('select, input').forEach(el => { el.disabled = true; });
+        btn.innerHTML = '&#8253;';
+        btn.title = 'Restore this row';
+        btn.classList.remove('btn-outline-danger');
+        btn.classList.add('btn-outline-secondary');
+    } else {
+        row.classList.remove('row-dismissed');
+        row.querySelectorAll('select, input').forEach(el => { el.disabled = false; });
+        btn.innerHTML = '&#10005;';
+        btn.title = 'Remove this row';
+        btn.classList.remove('btn-outline-secondary');
+        btn.classList.add('btn-outline-danger');
+        updateEditGigBitRowPps(row);
+    }
+
     updateEditGigRowCount();
 }
 
 function updateEditGigRowCount() {
-    const n = document.getElementById('editGigBitRows').querySelectorAll('.edit-gig-bit-row').length;
+    const rows = [...document.getElementById('editGigBitRows').querySelectorAll('.edit-gig-bit-row')];
+    const n = rows.filter(r => !r.classList.contains('row-dismissed')).length;
     const matches = n * (n - 1) / 2;
     document.getElementById('editGigRowCount').textContent =
         `${n} bits → ${matches} match-up${matches !== 1 ? 's' : ''}`;
@@ -2252,7 +2356,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const editGigForm = document.querySelector('#editGigModal form');
     if (editGigForm) {
         editGigForm.addEventListener('submit', function (e) {
-            const selects = [...this.querySelectorAll('select[name="bit_id[]"]')];
+            const selects = [...this.querySelectorAll('select[name="bit_id[]"]:not(:disabled)')];
             const ids     = selects.map(s => s.value).filter(v => v !== '');
             if (new Set(ids).size !== ids.length) {
                 e.preventDefault();
