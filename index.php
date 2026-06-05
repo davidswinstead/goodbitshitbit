@@ -150,7 +150,7 @@ function recalculateAllRatings(?int $summaryGigId = null): array
                     $sA = 0.5;  $sB = 0.5;
                 }
 
-                $mov = log(1.0 + abs($ppmA - $ppmB));
+                $mov = log(1.0 + abs($ppmA - $ppmB) * 10.0);
                 $dA = ELO_K * ($sA - $expA) * $mov;
                 $dB = ELO_K * ($sB - $expB) * $mov;
 
@@ -299,7 +299,7 @@ function buildBitBattleHistory(): array
                     $winner = 'Tie';
                 }
 
-                $mov = log(1.0 + abs($bits[$idA]['ppm'] - $bits[$idB]['ppm']));
+                $mov = log(1.0 + abs($bits[$idA]['ppm'] - $bits[$idB]['ppm']) * 10.0);
                 $dA = ELO_K * ($sA - $expA) * $mov;
                 $dB = ELO_K * ($sB - $expB) * $mov;
 
@@ -416,7 +416,7 @@ function buildAllGigSummaries(): array
                     $sA = 0.5; $sB = 0.5; $winner = 'Tie';
                 }
 
-                $mov = log(1.0 + abs($ppmA - $ppmB));
+                $mov = log(1.0 + abs($ppmA - $ppmB) * 10.0);
                 $dA = ELO_K * ($sA - $expA) * $mov;
                 $dB = ELO_K * ($sB - $expB) * $mov;
 
