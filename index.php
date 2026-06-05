@@ -664,6 +664,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $flash = ['type' => 'danger', 'html' => 'Invalid gig ID.'];
         } else {
             try {
+                // Snapshot current Elo ranking before recalculation
+                foreach (db()->query(
+                    'SELECT id FROM bits WHERE times_performed > 0 ORDER BY current_elo DESC, name COLLATE NOCASE ASC'
+                )->fetchAll(PDO::FETCH_ASSOC) as $i => $r) {
+                    $rankBefore[(int)$r['id']] = $i + 1;
+                }
+
                 db()->beginTransaction();
                 $st = db()->prepare('DELETE FROM performances WHERE gig_id = :id');
                 $st->execute([':id' => $id]);
