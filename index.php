@@ -150,8 +150,9 @@ function recalculateAllRatings(?int $summaryGigId = null): array
                     $sA = 0.5;  $sB = 0.5;
                 }
 
-                $dA = ELO_K * ($sA - $expA);
-                $dB = ELO_K * ($sB - $expB);
+                $mov = log(1.0 + abs($ppmA - $ppmB));
+                $dA = ELO_K * ($sA - $expA) * $mov;
+                $dB = ELO_K * ($sB - $expB) * $mov;
 
                 $bits[$idA]['elo_delta'] += $dA;
                 $bits[$idB]['elo_delta'] += $dB;
@@ -298,8 +299,9 @@ function buildBitBattleHistory(): array
                     $winner = 'Tie';
                 }
 
-                $dA = ELO_K * ($sA - $expA);
-                $dB = ELO_K * ($sB - $expB);
+                $mov = log(1.0 + abs($bits[$idA]['ppm'] - $bits[$idB]['ppm']));
+                $dA = ELO_K * ($sA - $expA) * $mov;
+                $dB = ELO_K * ($sB - $expB) * $mov;
 
                 $bits[$idA]['elo_delta'] += $dA;
                 $bits[$idB]['elo_delta'] += $dB;
@@ -414,8 +416,9 @@ function buildAllGigSummaries(): array
                     $sA = 0.5; $sB = 0.5; $winner = 'Tie';
                 }
 
-                $dA = ELO_K * ($sA - $expA);
-                $dB = ELO_K * ($sB - $expB);
+                $mov = log(1.0 + abs($ppmA - $ppmB));
+                $dA = ELO_K * ($sA - $expA) * $mov;
+                $dB = ELO_K * ($sB - $expB) * $mov;
 
                 $bits[$idA]['elo_delta'] += $dA;
                 $bits[$idB]['elo_delta'] += $dB;
@@ -673,6 +676,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 try { db()->rollBack(); } catch (Exception) {}
                 $flash = ['type' => 'danger', 'html' => htmlspecialchars($e->getMessage())];
             }
+        }
+    }
+
+    // ── Full recalculation ────────────────────────────────────────────────────
+    if ($action === 'recalc_all') {
+        try {
+            // Snapshot current Elo ranking before recalculation
+            foreach (db()->query(
+                'SELECT id FROM bits WHERE times_performed > 0 ORDER BY current_elo DESC, name COLLATE NOCASE ASC'
+            )->fetchAll(PDO::FETCH_ASSOC) as $i => $r) {
+                $rankBefore[(int)$r['id']] = $i + 1;
+            }
+
+            recalculateAllRatings();
+            $flash = ['type' => 'success', 'html' => 'All Elo ratings recalculated from scratch.'];
+        } catch (Exception $e) {
+            $flash = ['type' => 'danger', 'html' => htmlspecialchars($e->getMessage())];
         }
     }
 
@@ -1352,7 +1372,18 @@ function h(mixed $v): string
         </div>
     </div>
 
-    <footer class="text-center text-muted small mt-4">Comedy Bits Elo Tracker &middot; PHP 8 + SQLite3</footer>
+    <footer class="mt-5 pt-4 border-top">
+        <div class="d-flex flex-column align-items-center gap-2 mb-3">
+            <form method="POST" onsubmit="return confirm('Recalculate all Elo ratings from scratch? This replays every gig in chronological order.')">
+                <input type="hidden" name="action" value="recalc_all">
+                <button type="submit" class="btn btn-outline-warning btn-sm">
+                    &#9881;&#65039; Recalculate All Ratings from Scratch
+                </button>
+            </form>
+            <small class="text-muted">Replays all gigs chronologically &mdash; use if ratings ever look wrong</small>
+        </div>
+        <p class="text-center text-muted small mb-0">Comedy Bits Elo Tracker &middot; PHP 8 + SQLite3</p>
+    </footer>
 
 </div><!-- /container -->
 
