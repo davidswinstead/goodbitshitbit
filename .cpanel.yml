@@ -19,6 +19,7 @@ deployment:
     - /bin/cp index.php    /home/a2bremov/davidswinstead.com/misc/goodbitshitbit/index.php
     - /bin/cp init_db.php  /home/a2bremov/davidswinstead.com/misc/goodbitshitbit/init_db.php
     - /bin/cp convert.php  /home/a2bremov/davidswinstead.com/misc/goodbitshitbit/convert.php
+    - /bin/cp migrate_bit_metadata.php /home/a2bremov/davidswinstead.com/misc/goodbitshitbit/migrate_bit_metadata.php
 
     # ── 3. Permissions ──────────────────────────────────────────────────────
     # Directories: traversable by web server
