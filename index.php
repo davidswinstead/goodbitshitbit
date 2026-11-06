@@ -46,6 +46,26 @@ function db(): PDO
     return $instance;
 }
 
+$bitColumns = array_column(db()->query('PRAGMA table_info(bits)')->fetchAll(PDO::FETCH_ASSOC), 'name');
+$missingBitColumns = array_diff(['status', 'notes'], $bitColumns);
+if ($missingBitColumns) {
+    http_response_code(503);
+    ?>
+    <!DOCTYPE html>
+    <html lang="en">
+    <head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Database update required</title></head>
+    <body>
+        <main style="max-width: 42rem; margin: 4rem auto; padding: 0 1rem; font: 16px/1.5 sans-serif;">
+            <h1>Database update required</h1>
+            <p>This database is missing the bit status and notes fields. Run the one-time migration before using the tracker.</p>
+            <p><a href="migrate_bit_metadata.php">Run the database migration</a></p>
+        </main>
+    </body>
+    </html>
+    <?php
+    exit;
+}
+
 // ── Elo helpers ──────────────────────────────────────────────────────────────
 
 function eloExpected(float $myRating, float $oppRating): float
@@ -502,6 +522,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if ($action === 'rename_bit') {
         $id      = (int)($_POST['bit_id'] ?? 0);
         $newName = trim($_POST['new_name'] ?? '');
+        $notes   = is_string($_POST['notes'] ?? null) ? trim($_POST['notes']) : '';
+        $status  = isset($_POST['hidden_bit']) ? 0 : 1;
         if ($id <= 0) {
             $flash = ['type' => 'danger', 'html' => 'Invalid bit ID.'];
         } elseif ($newName === '') {
@@ -510,10 +532,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $flash = ['type' => 'danger', 'html' => 'Bit name is too long (max 200 chars).'];
         } else {
             try {
-                $st = db()->prepare('UPDATE bits SET name = :name WHERE id = :id');
-                $st->execute([':name' => $newName, ':id' => $id]);
+                $st = db()->prepare('UPDATE bits SET name = :name, status = :status, notes = :notes WHERE id = :id');
+                $st->execute([':name' => $newName, ':status' => $status, ':notes' => $notes, ':id' => $id]);
                 $flash = ['type' => 'success',
-                          'html' => 'Bit renamed to <strong>' . htmlspecialchars($newName) . '</strong>.'];
+                          'html' => 'Bit details saved for <strong>' . htmlspecialchars($newName) . '</strong>.'];
             } catch (Exception $e) {
                 $msg   = str_contains($e->getMessage(), 'UNIQUE')
                     ? 'A bit with that name already exists.'
@@ -870,12 +892,14 @@ $sql = "
 ";
 $allBits = db()->query($sql)->fetchAll(PDO::FETCH_ASSOC);
 
-$testedBits   = array_values(array_filter($allBits, fn($b) => (int)$b['perf_count'] > 0));
-$untestedBits = array_values(array_filter($allBits, fn($b) => (int)$b['perf_count'] === 0));
+$visibleBits  = array_values(array_filter($allBits, fn($b) => (int)$b['status'] !== 0));
+$testedBits   = array_values(array_filter($visibleBits, fn($b) => (int)$b['perf_count'] > 0));
+$untestedBits = array_values(array_filter($visibleBits, fn($b) => (int)$b['perf_count'] === 0));
+$hiddenBits   = array_values(array_filter($allBits, fn($b) => (int)$b['status'] === 0));
 
 // Compute post-recalculation rank positions (only populated after a log/edit)
 if (!empty($rankBefore)) {
-    $eloRanked = $testedBits;
+    $eloRanked = array_values(array_filter($allBits, fn($b) => (int)$b['perf_count'] > 0));
     usort($eloRanked, fn($a, $b) => $b['current_elo'] <=> $a['current_elo'] ?: strcasecmp($a['name'], $b['name']));
     foreach ($eloRanked as $i => $bit) {
         $rankAfter[(int)$bit['id']] = $i + 1;
@@ -883,7 +907,7 @@ if (!empty($rankBefore)) {
 }
 
 // Dropdown list (always alpha order for ergonomics)
-$dropdownBits = db()->query('SELECT id, name FROM bits ORDER BY name COLLATE NOCASE')->fetchAll(PDO::FETCH_ASSOC);
+$dropdownBits = db()->query('SELECT id, name, status, notes FROM bits ORDER BY name COLLATE NOCASE')->fetchAll(PDO::FETCH_ASSOC);
 
 // Performances grouped by gig, newest date first
 $perfRows = db()->query(
@@ -1070,7 +1094,7 @@ function h(mixed $v): string
              id="testedBitsHeader" data-toggle-target="testedBitsBody" style="cursor:pointer; user-select:none;">
             <h5 class="mb-0">&#127942; Tested Bits</h5>
             <div class="d-flex align-items-center gap-3">
-                <small class="text-white-50"><?= count($testedBits) ?> tested / <?= count($allBits) ?> total</small>
+                <small class="text-white-50"><?= count($testedBits) ?> tested / <?= count($visibleBits) ?> visible</small>
                 <button type="button"
                         class="btn btn-success btn-sm"
                         onclick="openAddBitModal(event)">
@@ -1268,6 +1292,12 @@ function h(mixed $v): string
                                    maxlength="500" autocomplete="off">
                         </div>
 
+                        <div class="form-check mb-2">
+                            <input class="form-check-input include-hidden-bits" type="checkbox"
+                                   id="includeHiddenShowBits" data-bit-rows="bitRows">
+                            <label class="form-check-label" for="includeHiddenShowBits">Include hidden bits</label>
+                        </div>
+
                         <!-- Column headers for bit rows -->
                         <div class="row g-2 mb-1 text-muted small">
                             <div class="col-4">Bit</div>
@@ -1379,6 +1409,62 @@ function h(mixed $v): string
         </div>
     </div>
 
+    <div class="card mt-4 shadow-sm">
+        <div class="card-header bg-secondary text-white d-flex justify-content-between align-items-center"
+             id="hiddenBitsHeader" data-toggle-target="hiddenBitsBody" style="cursor:pointer; user-select:none;">
+            <h5 class="mb-0">Hidden Bits</h5>
+            <small class="text-white-50"><?= count($hiddenBits) ?> hidden</small>
+        </div>
+        <div class="card-body p-0" id="hiddenBitsBody" style="display:none;">
+            <div class="table-responsive">
+                <table class="table table-striped table-hover align-middle mb-0">
+                    <thead class="table-dark">
+                        <tr>
+                            <th style="width:3rem">#</th>
+                            <th style="width:4rem"></th>
+                            <th><?= sortLink('name', 'Bit Name', $sortCol, $sortDir) ?></th>
+                            <th><?= sortLink('current_elo', 'Elo Rating', $sortCol, $sortDir) ?></th>
+                            <th><?= sortLink('times_performed', 'Performances', $sortCol, $sortDir) ?></th>
+                            <th><?= sortLink('last_performed_date', 'Last Performed', $sortCol, $sortDir) ?></th>
+                            <th><?= sortLink('avg_pps', 'Avg PPS', $sortCol, $sortDir) ?></th>
+                            <th><?= sortLink('avg_length_secs', 'Avg Secs', $sortCol, $sortDir) ?></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php if (empty($hiddenBits)): ?>
+                            <tr><td colspan="8" class="text-center text-muted py-4">No hidden bits.</td></tr>
+                        <?php endif; ?>
+                        <?php foreach ($hiddenBits as $rank => $bit): ?>
+                            <?php
+                                $avgPps = $bit['avg_pps'] !== null ? number_format((float)$bit['avg_pps'], 2) : '—';
+                                $avgLen = $bit['avg_length_secs'] !== null ? (string)((int)(ceil(((float)$bit['avg_length_secs']) / 5) * 5)) : '—';
+                                $elo = (float)$bit['current_elo'];
+                                $eloBg = $elo >= 1100 ? 'bg-success' : ($elo >= 1000 ? 'bg-primary' : 'bg-secondary');
+                            ?>
+                            <tr>
+                                <td class="text-muted"><?= $rank + 1 ?></td>
+                                <td class="text-center">
+                                    <div class="d-flex justify-content-center gap-1">
+                                        <button type="button" class="btn btn-sm btn-link btn-edit p-0" title="Edit bit"
+                                                onclick='openEditModal(<?= (int)$bit['id'] ?>, <?= json_encode($bit['name'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>)'>&#9999;&#65039;</button>
+                                        <button type="button" class="btn btn-sm btn-link btn-chart p-0" title="View bit battles"
+                                                onclick='openBitBattlesModal(<?= (int)$bit['id'] ?>, <?= json_encode($bit['name'], JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT) ?>)'>&#128202;</button>
+                                    </div>
+                                </td>
+                                <td class="fw-semibold"><?= h($bit['name']) ?></td>
+                                <td><span class="badge <?= $eloBg ?> elo-badge fs-6"><?= number_format($elo, 1) ?></span></td>
+                                <td><?= (int)$bit['times_performed'] ?></td>
+                                <td><?= $bit['last_performed_date'] ? h($bit['last_performed_date']) : '<span class="text-muted">—</span>' ?></td>
+                                <td><?= $avgPps ?></td>
+                                <td><?= $avgLen ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <footer class="mt-5 pt-4 border-top">
         <div class="d-flex flex-column align-items-center gap-2 mb-3">
             <form method="POST" onsubmit="return confirm('Recalculate all Elo ratings from scratch? This replays every gig in chronological order.')">
@@ -1436,13 +1522,24 @@ function h(mixed $v): string
                     <label class="form-label fw-semibold" for="editBitName">Bit Name</label>
                     <input type="text" id="editBitName" name="new_name"
                            class="form-control" maxlength="200" required autocomplete="off">
+                    <div class="form-check mt-3">
+                        <input class="form-check-input" type="checkbox" id="editBitHidden" name="hidden_bit" value="1">
+                        <label class="form-check-label" for="editBitHidden">Hide this bit from the list</label>
+                        <button type="button" class="btn btn-sm btn-link p-0 ms-1 text-decoration-none"
+                                aria-label="About hiding bits" data-bs-toggle="tooltip"
+                                title="This is useful when a bit has been logged in past sets but is no longer relevant for consideration, typically because it has been superseded by newer versions, or merged in with other jokes.">&#9432;</button>
+                    </div>
+                    <div class="mt-3">
+                        <label class="form-label fw-semibold" for="editBitNotes">Notes</label>
+                        <textarea id="editBitNotes" name="notes" class="form-control" rows="4"></textarea>
+                    </div>
                 </div>
                 <div class="modal-footer d-flex justify-content-between">
                     <button type="button" class="btn btn-outline-danger btn-sm"
                             id="showDeleteConfirmBtn">Delete this bit&hellip;</button>
                     <div class="d-flex gap-2">
                         <button type="button" class="btn btn-secondary" id="cancelRenameBtn">Cancel</button>
-                        <button type="submit" class="btn btn-primary">Save Name</button>
+                        <button type="submit" class="btn btn-primary">Save Changes</button>
                     </div>
                 </div>
             </form>
@@ -1509,6 +1606,11 @@ function h(mixed $v): string
 
                     <div class="mb-3">
                         <label class="fw-semibold small">Performances</label>
+                        <div class="form-check mb-2">
+                            <input class="form-check-input include-hidden-bits" type="checkbox"
+                                   id="includeHiddenEditBits" data-bit-rows="editGigBitRows">
+                            <label class="form-check-label" for="includeHiddenEditBits">Include hidden bits</label>
+                        </div>
                         <!-- Column headers for bit rows -->
                         <div class="row g-2 mb-1 text-muted small">
                             <div class="col-4">Bit</div>
@@ -1630,7 +1732,7 @@ function h(mixed $v): string
 
 // PHP drops the bits list as JSON — used to populate each row's dropdown.
 const ALL_BITS = <?= json_encode(
-    array_map(fn($b) => ['id' => (int)$b['id'], 'name' => $b['name']], $dropdownBits),
+    array_map(fn($b) => ['id' => (int)$b['id'], 'name' => $b['name'], 'status' => (int)$b['status'], 'notes' => $b['notes']], $dropdownBits),
     JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
 ) ?>;
 
@@ -1655,14 +1757,34 @@ function escHtml(str) {
         .replace(/'/g, '&#039;');
 }
 
-function buildOptions(selectedId) {
+function buildOptions(selectedId, includeHidden = false) {
     let html = '<option value="">— Select Bit —</option>';
     for (const b of ALL_BITS) {
+        if (Number(b.status) === 0 && !includeHidden && Number(b.id) !== Number(selectedId)) continue;
         const sel = b.id === selectedId ? ' selected' : '';
         html += `<option value="${b.id}"${sel}>${escHtml(b.name)}</option>`;
     }
     return html;
 }
+
+function includeHiddenBitsFor(rowsId) {
+    return document.querySelector(`.include-hidden-bits[data-bit-rows="${rowsId}"]`)?.checked || false;
+}
+
+function refreshBitOptions(rowsId, includeHidden) {
+    const container = document.getElementById(rowsId);
+    container.querySelectorAll('select[name="bit_id[]"]').forEach((select) => {
+        const selectedId = Number(select.value) || 0;
+        select.innerHTML = buildOptions(selectedId, includeHidden);
+        select.value = selectedId ? String(selectedId) : '';
+    });
+}
+
+document.querySelectorAll('.include-hidden-bits').forEach((checkbox) => {
+    checkbox.addEventListener('change', () => {
+        refreshBitOptions(checkbox.dataset.bitRows, checkbox.checked);
+    });
+});
 
 function addBitRow(selectedId = 0) {
     const container = document.getElementById('bitRows');
@@ -1672,7 +1794,7 @@ function addBitRow(selectedId = 0) {
     div.innerHTML = `
         <div class="col-4">
             <select name="bit_id[]" class="form-select" required>
-                ${buildOptions(selectedId)}
+                ${buildOptions(selectedId, includeHiddenBitsFor('bitRows'))}
             </select>
         </div>
         <div class="col-3">
@@ -1790,6 +1912,11 @@ document.getElementById('showForm').addEventListener('submit', function (e) {
 document.addEventListener('DOMContentLoaded', () => {
     for (let i = 0; i < 3; i++) addBitRow();
     initBitTableCollapsibles();
+    if (window.bootstrap && window.bootstrap.Tooltip) {
+        document.querySelectorAll('[data-bs-toggle="tooltip"]').forEach((element) => {
+            new window.bootstrap.Tooltip(element);
+        });
+    }
 });
 
 // ── Edit Bit Modal ────────────────────────────────────────────────────────────
@@ -1910,6 +2037,9 @@ function openEditModal(id, name) {
     editBitIdInput.value   = id;
     deleteBitIdInput.value = id;
     editBitNameInput.value = name;
+    const bit = ALL_BITS.find((item) => Number(item.id) === Number(id));
+    document.getElementById('editBitHidden').checked = bit ? Number(bit.status) === 0 : false;
+    document.getElementById('editBitNotes').value = bit?.notes || '';
     deleteConfirmName.textContent = name;
 
     showEditModal();
@@ -2259,6 +2389,7 @@ function openEditGigModal(id, date, name, youtube, perfsStr) {
 
     // Clear existing bit rows
     const container = document.getElementById('editGigBitRows');
+    document.getElementById('includeHiddenEditBits').checked = false;
     container.innerHTML = '';
 
     // Populate from existing performances
@@ -2298,7 +2429,7 @@ function addEditGigBitRow(selectedBitId = 0, duration = 0, score = 0) {
     div.innerHTML = `
         <div class="col-4">
             <select name="bit_id[]" class="form-select" required>
-                ${buildOptions(selectedBitId)}
+                ${buildOptions(selectedBitId, includeHiddenBitsFor('editGigBitRows'))}
             </select>
         </div>
         <div class="col-3">

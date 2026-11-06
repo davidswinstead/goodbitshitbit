@@ -78,7 +78,9 @@ try {
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
             name            TEXT    NOT NULL UNIQUE COLLATE NOCASE,
             current_elo     REAL    NOT NULL DEFAULT 1000.0,
-            times_performed INTEGER NOT NULL DEFAULT 0
+            times_performed INTEGER NOT NULL DEFAULT 0,
+            status          INTEGER NOT NULL DEFAULT 1,
+            notes           TEXT    NOT NULL DEFAULT ''
         )
     SQL);
 
